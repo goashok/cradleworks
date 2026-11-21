@@ -1,0 +1,21 @@
+{
+  "name": "cradleworks",
+  "private": true,
+  "description": "A software factory for building with AI agents",
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "check:core-rule": "node scripts/check-core-rule.ts",
+    "check": "pnpm run check:core-rule && pnpm run typecheck && pnpm run test"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}
