@@ -1,0 +1,16 @@
+{
+  "name": "@cradleworks/store-sqlite",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StateStore backed by SQLite, using the node:sqlite built-in",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@cradleworks/core": "workspace:*"
+  }
+}

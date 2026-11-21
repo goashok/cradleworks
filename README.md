@@ -8,11 +8,12 @@ A software factory for building with AI agents: a thin, vendor-neutral core that
 packages/
   core/         pipeline, state machine, domain model, policies (no vendor names)
   interfaces/   adapter interfaces and shared event types
+  store-sqlite/ StateStore on SQLite (node:sqlite built-in, append-only event log)
 scripts/
   check-core-rule.ts   fails CI if the core names a vendor, stack or project
 ```
 
-More packages (contracts, adapters, store, CLI) arrive with milestone M1.
+More packages (contracts, adapters, CLI) arrive with milestone M1.
 
 ## Develop
 

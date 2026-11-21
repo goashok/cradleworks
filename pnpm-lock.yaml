@@ -184,6 +184,16 @@ importers:
 
   packages/interfaces: {}
 
+  packages/store-sqlite:
+    dependencies:
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@cradleworks/core':
+        specifier: workspace:*
+        version: link:../core
+
 packages:
 
   '@emnapi/core@2.0.0-beta.2':
