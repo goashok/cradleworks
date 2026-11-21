@@ -11,6 +11,7 @@ packages/
   store-sqlite/ StateStore on SQLite (node:sqlite built-in, append-only event log)
   config/       loads .factory/factory.yaml over defaults/factory.yaml, with line-numbered errors
   contracts/    contract test suites every adapter must pass, and fakes that pass them
+  adapter-github/  GitHub SourceControl (git over HTTPS + REST); signs in with GITHUB_TOKEN or the gh login
 defaults/
   factory.yaml  factory-wide defaults for any key a project omits
 scripts/
@@ -21,7 +22,7 @@ More packages (vendor adapters, orchestrator, CLI) arrive with milestone M1.
 
 ## Adding an adapter
 
-Implement the interface from `@cradleworks/interfaces`, then run its suite from `@cradleworks/contracts` (`describeSourceControlContract`, `describeSandboxContract`, `describeAgentRuntimeContract`, `describeStateStoreContract`) against a real instance. The adapter is done when its suite passes. `@cradleworks/contracts/fakes` has working fakes for tests that need an adapter without accounts, containers or a model.
+Implement the interface from `@cradleworks/interfaces`, then run its suite from `@cradleworks/contracts` (`describeSourceControlContract`, `describeSandboxContract`, `describeAgentRuntimeContract`, `describeStateStoreContract`) against a real instance. The adapter is done when its suite passes. Contract suites against real services are opt-in, e.g. `CRADLEWORKS_GITHUB_CONTRACT=1 pnpm test` (uses a private `cradleworks-contract-scratch` repo on the signed-in account, created on first run). `@cradleworks/contracts/fakes` has working fakes for tests that need an adapter without accounts, containers or a model.
 
 ## Develop
 

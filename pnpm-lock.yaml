@@ -176,6 +176,16 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5)(yaml@2.9.1))
 
+  packages/adapter-github:
+    dependencies:
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/config:
     dependencies:
       '@cradleworks/core':

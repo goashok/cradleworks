@@ -1,0 +1,16 @@
+{
+  "name": "@cradleworks/adapter-github",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub adapters: SourceControl now; CI and Tracker in M2 and M3",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@cradleworks/contracts": "workspace:*"
+  }
+}
