@@ -1,0 +1,27 @@
+# Factory-wide defaults. A project's .factory/factory.yaml overrides any key here.
+# Maps merge key by key; lists and scalars are replaced whole.
+
+runtime:
+  roles: {}
+
+context:
+  include: [.]
+  rules: [.factory/rules/*.md]
+
+gates:
+  spec_approval: human
+  plan_check: ai
+  change_approval: human
+  auto_merge: false
+
+budgets:
+  per_task_usd: 5
+  max_rework_loops: 3
+
+specs: repo
+concurrency: 2
+
+sandbox:
+  network:
+    mode: allowlist
+    allow: []

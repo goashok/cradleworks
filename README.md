@@ -9,6 +9,9 @@ packages/
   core/         pipeline, state machine, domain model, policies (no vendor names)
   interfaces/   adapter interfaces and shared event types
   store-sqlite/ StateStore on SQLite (node:sqlite built-in, append-only event log)
+  config/       loads .factory/factory.yaml over defaults/factory.yaml, with line-numbered errors
+defaults/
+  factory.yaml  factory-wide defaults for any key a project omits
 scripts/
   check-core-rule.ts   fails CI if the core names a vendor, stack or project
 ```

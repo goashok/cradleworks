@@ -1,0 +1,15 @@
+{
+  "name": "@cradleworks/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loads and validates .factory/factory.yaml over the factory defaults",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/core": "workspace:*",
+    "@cradleworks/interfaces": "workspace:*",
+    "yaml": "2.9.1"
+  }
+}
