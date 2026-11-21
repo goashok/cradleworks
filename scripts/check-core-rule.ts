@@ -23,6 +23,9 @@ export const BANNED_NAMES: readonly string[] = [
 
 export const ALLOWED_PACKAGES: readonly string[] = ['@cradleworks/interfaces'];
 
+/** Test files may also import the test runner. */
+const TEST_ONLY_PACKAGES: readonly string[] = ['vitest'];
+
 export interface Violation {
   file: string;
   line: number;
@@ -44,18 +47,19 @@ function listFiles(dir: string): string[] {
   return out;
 }
 
-function isAllowedImport(specifier: string): boolean {
+function isAllowedImport(specifier: string, allowedPackages: readonly string[]): boolean {
   if (specifier.startsWith('./') || specifier.startsWith('../')) return true;
   if (specifier.startsWith('node:')) return true;
-  return ALLOWED_PACKAGES.some((pkg) => specifier === pkg || specifier.startsWith(`${pkg}/`));
+  return allowedPackages.some((pkg) => specifier === pkg || specifier.startsWith(`${pkg}/`));
 }
 
-export function checkCoreRule(coreDir: string): Violation[] {
+export function checkCoreRule(coreDir: string, allowedPackages: readonly string[] = ALLOWED_PACKAGES): Violation[] {
   const violations: Violation[] = [];
   const banned = new RegExp(`(?<![a-z0-9])(${BANNED_NAMES.map(escape).join('|')})(?![a-z0-9])`, 'gi');
 
   for (const file of listFiles(coreDir)) {
     const rel = relative(coreDir, file);
+    const allowed = /\.test\.[cm]?[jt]sx?$/.test(file) ? [...allowedPackages, ...TEST_ONLY_PACKAGES] : allowedPackages;
     const lines = readFileSync(file, 'utf8').split('\n');
     lines.forEach((text, index) => {
       for (const match of text.matchAll(banned)) {
@@ -63,7 +67,7 @@ export function checkCoreRule(coreDir: string): Violation[] {
       }
       for (const match of text.matchAll(IMPORT_PATTERN)) {
         const specifier = match[1];
-        if (specifier !== undefined && !isAllowedImport(specifier)) {
+        if (specifier !== undefined && !isAllowedImport(specifier, allowed)) {
           violations.push({ file: rel, line: index + 1, kind: 'forbidden-import', detail: specifier });
         }
       }
@@ -76,19 +80,31 @@ function escape(word: string): string {
   return word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Vendor-neutral packages and what each may import besides Node built-ins and its own files.
+const NEUTRAL_PACKAGES: ReadonlyArray<{ name: string; allowedPackages: readonly string[] }> = [
+  { name: 'core', allowedPackages: ALLOWED_PACKAGES },
+  { name: 'interfaces', allowedPackages: [] },
+];
+
 function main(): void {
   const repoRoot = join(fileURLToPath(import.meta.url), '..', '..');
-  const coreDir = process.argv[2] ?? join(repoRoot, 'packages', 'core', 'src');
-  const violations = checkCoreRule(coreDir);
-  if (violations.length === 0) {
-    console.log(`core rule: OK (${coreDir})`);
-    return;
+  const targets = process.argv[2]
+    ? [{ dir: process.argv[2], allowedPackages: ALLOWED_PACKAGES }]
+    : NEUTRAL_PACKAGES.map((p) => ({ dir: join(repoRoot, 'packages', p.name, 'src'), allowedPackages: p.allowedPackages }));
+
+  let total = 0;
+  for (const { dir, allowedPackages } of targets) {
+    const violations = checkCoreRule(dir, allowedPackages);
+    total += violations.length;
+    for (const v of violations) {
+      console.error(`${relative(repoRoot, join(dir, v.file))}:${v.line}  ${v.kind}  ${v.detail}`);
+    }
+    if (violations.length === 0) console.log(`core rule: OK (${relative(repoRoot, dir)})`);
   }
-  for (const v of violations) {
-    console.error(`${v.file}:${v.line}  ${v.kind}  ${v.detail}`);
+  if (total > 0) {
+    console.error(`core rule: ${total} violation(s). Neutral packages must not name vendors, stacks or projects.`);
+    process.exitCode = 1;
   }
-  console.error(`core rule: ${violations.length} violation(s). The core must not name vendors, stacks or projects.`);
-  process.exitCode = 1;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main();

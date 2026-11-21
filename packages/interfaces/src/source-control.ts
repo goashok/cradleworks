@@ -1,0 +1,64 @@
+import type { CommentRef, Identity, PullRequestRef, RepoRef, Timestamp } from './common.ts';
+
+/** A local checkout the factory can read and write. */
+export interface WorkingCopy {
+  repo: RepoRef;
+  /** Absolute path on the host. */
+  path: string;
+}
+
+export interface CommitRef {
+  sha: string;
+  url?: string;
+}
+
+export interface OpenPullRequestInput {
+  repo: RepoRef;
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+  draft?: boolean;
+  labels?: string[];
+}
+
+export type ReviewVerdict = 'approved' | 'changes_requested' | 'commented';
+
+export interface Review {
+  author: Identity;
+  verdict: ReviewVerdict;
+  body: string;
+  at: Timestamp;
+}
+
+export type ChecksState = 'none' | 'pending' | 'passing' | 'failing';
+
+export interface PullRequestStatus {
+  ref: PullRequestRef;
+  state: 'open' | 'merged' | 'closed';
+  headSha: string;
+  baseBranch: string;
+  /** `unknown` while the external system is still computing it. */
+  mergeable: boolean | 'unknown';
+  checks: ChecksState;
+  /** Reviews in time order; gates read the latest verdict per reviewer. */
+  reviews: Review[];
+}
+
+export type MergeMethod = 'merge' | 'squash' | 'rebase';
+
+export interface SourceControl {
+  /** Registry id of this adapter. */
+  readonly id: string;
+
+  clone(repo: RepoRef, into: string, options?: { ref?: string; depth?: number }): Promise<WorkingCopy>;
+  createBranch(copy: WorkingCopy, name: string, from?: string): Promise<void>;
+  /** Commits all staged and unstaged changes, or only `paths` when given. */
+  commit(copy: WorkingCopy, message: string, options?: { author?: Identity; paths?: string[] }): Promise<CommitRef>;
+  push(copy: WorkingCopy, branch: string): Promise<void>;
+  openPR(input: OpenPullRequestInput): Promise<PullRequestRef>;
+  getPRStatus(pr: PullRequestRef): Promise<PullRequestStatus>;
+  /** Refuses (AdapterError `conflict`) if the head moved past `expectedHeadSha`. */
+  merge(pr: PullRequestRef, options: { method: MergeMethod; expectedHeadSha: string }): Promise<CommitRef>;
+  comment(pr: PullRequestRef, body: string): Promise<CommentRef>;
+}

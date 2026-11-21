@@ -52,3 +52,18 @@ describe('checkCoreRule', () => {
     expect(kinds).toEqual(['forbidden-import:@octokit/rest', 'forbidden-import:some-sdk']);
   });
 });
+
+describe('checkCoreRule in test files', () => {
+  it('allows the test runner in test files only', () => {
+    const dir = fixture({
+      'a.test.ts': "import { it } from 'vitest';\n",
+      'a.ts': "import { it } from 'vitest';\n",
+    });
+    expect(checkCoreRule(dir).map((v) => v.file)).toEqual(['a.ts']);
+  });
+
+  it('applies a stricter allow-list when given one', () => {
+    const dir = fixture({ 'a.ts': "import { x } from '@cradleworks/interfaces';\n" });
+    expect(checkCoreRule(dir, [])).toHaveLength(1);
+  });
+});
