@@ -24,7 +24,7 @@ export const BANNED_NAMES: readonly string[] = [
 export const ALLOWED_PACKAGES: readonly string[] = ['@cradleworks/interfaces'];
 
 /** Test files may also import the test runner. */
-const TEST_ONLY_PACKAGES: readonly string[] = ['vitest'];
+const TEST_ONLY_PACKAGES: readonly string[] = ['vitest', '@cradleworks/contracts'];
 
 export interface Violation {
   file: string;

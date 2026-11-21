@@ -212,6 +212,10 @@ importers:
       '@cradleworks/interfaces':
         specifier: workspace:*
         version: link:../interfaces
+    devDependencies:
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/interfaces: {}
 

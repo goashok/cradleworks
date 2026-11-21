@@ -5,3 +5,4 @@ export * from './domain/index.ts';
 export const CORE_VERSION = '0.1.0';
 export type * from './config/types.ts';
 export { resolveAgent } from './config/types.ts';
+export * from './orchestrator/index.ts';

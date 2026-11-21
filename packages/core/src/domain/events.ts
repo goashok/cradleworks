@@ -13,6 +13,8 @@ export interface PlannedTask {
   title: string;
   dependsOn: string[];
   size: TaskSize;
+  /** Markdown: what to change and how to tell it is done. */
+  description?: string;
 }
 
 export type WorkItemEvent =

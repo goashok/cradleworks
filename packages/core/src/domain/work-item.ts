@@ -97,7 +97,7 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       }
       if (hasCycle(event.tasks)) fail('task dependencies must not form a cycle');
       const specId = wi.spec?.specId ?? fail('no approved spec');
-      wi.proposedTasks = event.tasks.map((t) => newTask(t.taskId, specId, t.title, t.dependsOn, t.size));
+      wi.proposedTasks = event.tasks.map((t) => newTask(t.taskId, specId, t.title, t.dependsOn, t.size, t.description));
       return;
     }
 
@@ -334,13 +334,14 @@ function rollUp(tasks: Task[]): WorkItemState {
   return 'in_progress';
 }
 
-function newTask(id: string, specId: string, title: string, dependsOn: string[], size: Task['size']): Task {
+function newTask(id: string, specId: string, title: string, dependsOn: string[], size: Task['size'], description?: string): Task {
   return {
     id,
     specId,
     title,
     dependsOn: [...dependsOn],
     size,
+    ...(description !== undefined ? { description } : {}),
     state: 'queued',
     reworkLoops: 0,
     gateReworks: 0,

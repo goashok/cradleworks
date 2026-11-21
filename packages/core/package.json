@@ -8,5 +8,8 @@
   },
   "dependencies": {
     "@cradleworks/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@cradleworks/contracts": "workspace:*"
   }
 }

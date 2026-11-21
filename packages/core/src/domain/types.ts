@@ -66,6 +66,7 @@ export interface Task {
   title: string;
   dependsOn: string[];
   size: TaskSize;
+  description?: string;
   state: TaskState;
   branch?: string;
   pr?: ExternalRef;
