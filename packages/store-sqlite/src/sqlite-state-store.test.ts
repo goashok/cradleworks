@@ -1,114 +1,30 @@
+import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
 import { applyEvent, fromStoredEvent, replay, toNewEvent, type WorkItem, type WorkItemEvent } from '@cradleworks/core';
-import { AdapterError, type NewEvent } from '@cradleworks/interfaces';
+import type { NewEvent } from '@cradleworks/interfaces';
+import { describeStateStoreContract } from '@cradleworks/contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteStateStore } from './index.ts';
 
 const at = (s: number) => new Date(Date.UTC(2026, 10, 21, 12, 0, s)).toISOString();
 const e = (type: string, payload: unknown = {}, s = 0): NewEvent => ({ type, payload, at: at(s) });
 
-async function expectAdapterError(promise: Promise<unknown>, code: AdapterError['code']) {
-  const error = await promise.then(
-    () => undefined,
-    (err: unknown) => err,
-  );
-  expect(error).toBeInstanceOf(AdapterError);
-  expect((error as AdapterError).code).toBe(code);
-}
 
-let store: SqliteStateStore;
-beforeEach(() => {
-  store = new SqliteStateStore({ path: ':memory:' });
-});
-afterEach(async () => {
-  await store.close();
-});
+describeStateStoreContract('sqlite in memory', async () => ({ store: new SqliteStateStore({ path: ':memory:' }), cleanup: async () => {} }));
 
-describe('append and read', () => {
-  it('numbers events per stream and globally', async () => {
-    const a = await store.append('a', [e('x'), e('y')]);
-    const b = await store.append('b', [e('x')]);
-    const a2 = await store.append('a', [e('z')]);
-    expect(a.map((s) => [s.seq, s.position])).toEqual([
-      [1, 1],
-      [2, 2],
-    ]);
-    expect(b.map((s) => [s.seq, s.position])).toEqual([[1, 3]]);
-    expect(a2.map((s) => [s.seq, s.position])).toEqual([[3, 4]]);
-    expect((await store.readStream('a')).map((s) => s.type)).toEqual(['x', 'y', 'z']);
-    expect((await store.readStream('a', 3)).map((s) => s.type)).toEqual(['z']);
-  });
-
-  it('round-trips payloads and timestamps', async () => {
-    const payload = { n: 1, list: ['a', { deep: true }], none: null };
-    await store.append('a', [e('x', payload, 7)]);
-    const [read] = await store.readStream('a');
-    expect(read).toMatchObject({ streamId: 'a', seq: 1, type: 'x', payload, at: at(7) });
-  });
-
-  it('enforces expectedSeq', async () => {
-    await store.append('a', [e('x')], 0);
-    await store.append('a', [e('y')], 1);
-    await expectAdapterError(store.append('a', [e('z')], 1), 'conflict');
-    await expectAdapterError(store.append('new', [e('z')], 3), 'conflict');
-    expect(await store.readStream('a')).toHaveLength(2);
-  });
-
-  it('writes all events of a call or none', async () => {
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
-    await expectAdapterError(store.append('a', [e('ok'), e('bad', circular)]), 'invalid_input');
-    await expectAdapterError(store.append('a', [e('ok'), { type: 'bad', payload: undefined, at: at(0) }]), 'invalid_input');
-    expect(await store.readStream('a')).toEqual([]);
-  });
-
-  it('treats an empty append as a no-op that still checks expectedSeq', async () => {
-    expect(await store.append('a', [], 0)).toEqual([]);
-    await expectAdapterError(store.append('a', [], 5), 'conflict');
-  });
-});
-
-describe('query', () => {
-  beforeEach(async () => {
-    await store.append('a', [e('x'), e('y')]);
-    await store.append('b', [e('x'), e('z')]);
-  });
-
-  it('filters by stream, type and position, in global order', async () => {
-    const pos = async (q: Parameters<SqliteStateStore['query']>[0]) => (await store.query(q)).map((s) => s.position);
-    expect(await pos({})).toEqual([1, 2, 3, 4]);
-    expect(await pos({ streamIds: ['b'] })).toEqual([3, 4]);
-    expect(await pos({ types: ['x'] })).toEqual([1, 3]);
-    expect(await pos({ types: ['x', 'z'], streamIds: ['b'] })).toEqual([3, 4]);
-    expect(await pos({ afterPosition: 2 })).toEqual([3, 4]);
-    expect(await pos({ limit: 1, afterPosition: 1 })).toEqual([2]);
-    expect(await pos({ streamIds: [] })).toEqual([]);
-  });
-
-  it('rejects a bad limit', async () => {
-    await expectAdapterError(store.query({ limit: -1 }), 'invalid_input');
-  });
-});
-
-describe('snapshots', () => {
-  it('saves, loads and keeps the newest', async () => {
-    await store.append('a', [e('x'), e('y'), e('z')]);
-    expect(await store.loadSnapshot('a')).toBeUndefined();
-    await store.saveSnapshot({ streamId: 'a', seq: 2, state: { n: 2 } });
-    await store.saveSnapshot({ streamId: 'a', seq: 1, state: { n: 1 } });
-    expect(await store.loadSnapshot('a')).toEqual({ streamId: 'a', seq: 2, state: { n: 2 } });
-    await store.saveSnapshot({ streamId: 'a', seq: 3, state: { n: 3 } });
-    expect((await store.loadSnapshot('a'))?.seq).toBe(3);
-  });
-
-  it('refuses a snapshot past the end of its stream', async () => {
-    await store.append('a', [e('x')]);
-    await expectAdapterError(store.saveSnapshot({ streamId: 'a', seq: 2, state: {} }), 'invalid_input');
-    await expectAdapterError(store.saveSnapshot({ streamId: 'none', seq: 1, state: {} }), 'invalid_input');
-  });
+describeStateStoreContract('sqlite on disk', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cw-store-contract-'));
+  const path = join(dir, 'state.db');
+  return {
+    store: new SqliteStateStore({ path }),
+    openSecond: async () => new SqliteStateStore({ path }),
+    cleanup: async () => rmSync(dir, { recursive: true, force: true }),
+  };
 });
 
 describe('rebuilding a work item from the store', () => {
@@ -130,6 +46,7 @@ describe('rebuilding a work item from the store', () => {
   ];
 
   it('matches a full replay when rebuilt from a snapshot plus later events', async () => {
+    const store = new SqliteStateStore({ path: ':memory:' });
     await store.append('wi_1', events.slice(0, 7).map(toNewEvent), 0);
     const atSeven = replay((await store.readStream('wi_1')).map(fromStoredEvent))!;
     await store.saveSnapshot({ streamId: 'wi_1', seq: 7, state: atSeven });
@@ -143,6 +60,7 @@ describe('rebuilding a work item from the store', () => {
     expect(rebuilt).toEqual(full);
     expect(full).toEqual(replay(events));
     expect(rebuilt.tasks[0]).toMatchObject({ state: 'ready', reworkLoops: 1 });
+    await store.close();
   });
 });
 
@@ -188,10 +106,24 @@ describe('on disk', () => {
     expect(() => new SqliteStateStore({ path })).toThrow(/schema version 99/);
   });
 
-  it('fails clearly after close', async () => {
-    const s = new SqliteStateStore({ path: ':memory:' });
-    await s.close();
-    await s.close(); // idempotent
-    await expectAdapterError(s.readStream('a'), 'unavailable');
+  it('stays consistent with several processes appending at once', { timeout: 60_000 }, async () => {
+    const path = join(dir, 'shared.db');
+    await new SqliteStateStore({ path }).close();
+    const writer = fileURLToPath(new URL('./concurrent-writer.fixture.ts', import.meta.url));
+    const writers = 4;
+    const each = 25;
+    const results = await Promise.all(
+      Array.from({ length: writers }, (_, w) => promisify(execFile)(process.execPath, [writer, path, `w${w}`, String(each)])),
+    );
+    for (const r of results) expect(JSON.parse(r.stdout)).toHaveProperty('conflicts');
+
+    const store = new SqliteStateStore({ path });
+    const events = await store.readStream('shared');
+    await store.close();
+    expect(events.map((e) => e.seq)).toEqual(Array.from({ length: writers * each }, (_, i) => i + 1));
+    for (let w = 0; w < writers; w++) {
+      const mine = events.filter((e) => (e.payload as { writer: string }).writer === `w${w}`).map((e) => (e.payload as { i: number }).i);
+      expect(mine).toEqual(Array.from({ length: each }, (_, i) => i));
+    }
   });
 });

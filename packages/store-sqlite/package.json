@@ -11,6 +11,7 @@
     "@cradleworks/interfaces": "workspace:*"
   },
   "devDependencies": {
-    "@cradleworks/core": "workspace:*"
+    "@cradleworks/core": "workspace:*",
+    "@cradleworks/contracts": "workspace:*"
   }
 }

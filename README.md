@@ -10,13 +10,18 @@ packages/
   interfaces/   adapter interfaces and shared event types
   store-sqlite/ StateStore on SQLite (node:sqlite built-in, append-only event log)
   config/       loads .factory/factory.yaml over defaults/factory.yaml, with line-numbered errors
+  contracts/    contract test suites every adapter must pass, and fakes that pass them
 defaults/
   factory.yaml  factory-wide defaults for any key a project omits
 scripts/
   check-core-rule.ts   fails CI if the core names a vendor, stack or project
 ```
 
-More packages (contracts, adapters, CLI) arrive with milestone M1.
+More packages (vendor adapters, orchestrator, CLI) arrive with milestone M1.
+
+## Adding an adapter
+
+Implement the interface from `@cradleworks/interfaces`, then run its suite from `@cradleworks/contracts` (`describeSourceControlContract`, `describeSandboxContract`, `describeAgentRuntimeContract`, `describeStateStoreContract`) against a real instance. The adapter is done when its suite passes. `@cradleworks/contracts/fakes` has working fakes for tests that need an adapter without accounts, containers or a model.
 
 ## Develop
 

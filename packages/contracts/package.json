@@ -1,0 +1,15 @@
+{
+  "name": "@cradleworks/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contract test suites every adapter must pass, and fakes that pass them",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fakes": "./src/fakes/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/interfaces": "workspace:*",
+    "vitest": "5.1.0"
+  }
+}
