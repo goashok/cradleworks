@@ -12,6 +12,7 @@ packages/
   config/       loads .factory/factory.yaml over defaults/factory.yaml, with line-numbered errors
   contracts/    contract test suites every adapter must pass, and fakes that pass them
   adapter-github/  GitHub SourceControl (git over HTTPS + REST); signs in with GITHUB_TOKEN or the gh login
+  cli/          the `factory` command
 defaults/
   factory.yaml  factory-wide defaults for any key a project omits
 scripts/
@@ -32,6 +33,17 @@ Requires Node 22.18+ (CI uses the version in `.nvmrc`) and pnpm (pinned in `pack
 pnpm install
 pnpm check   # core rule, typecheck, tests
 ```
+
+## Use
+
+```sh
+# inside a repository with .factory/factory.yaml
+factory submit task.md        # task.md starts with "# Title"; builds it and opens a PR
+factory status                # list work items
+factory status <work-item-id> # tasks, PRs, runs and gate decisions
+```
+
+Until the package is installed globally, run it as `packages/cli/src/main.ts`. State lives in `~/.cradleworks` (override with `CRADLEWORKS_HOME`).
 
 ## The core rule
 

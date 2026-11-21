@@ -1,0 +1,21 @@
+{
+  "name": "@cradleworks/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The factory command",
+  "type": "module",
+  "bin": {
+    "factory": "./src/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/adapter-github": "workspace:*",
+    "@cradleworks/config": "workspace:*",
+    "@cradleworks/contracts": "workspace:*",
+    "@cradleworks/core": "workspace:*",
+    "@cradleworks/interfaces": "workspace:*",
+    "@cradleworks/store-sqlite": "workspace:*"
+  }
+}

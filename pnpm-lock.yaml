@@ -186,6 +186,27 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/cli:
+    dependencies:
+      '@cradleworks/adapter-github':
+        specifier: workspace:*
+        version: link:../adapter-github
+      '@cradleworks/config':
+        specifier: workspace:*
+        version: link:../config
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cradleworks/core':
+        specifier: workspace:*
+        version: link:../core
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@cradleworks/store-sqlite':
+        specifier: workspace:*
+        version: link:../store-sqlite
+
   packages/config:
     dependencies:
       '@cradleworks/core':
