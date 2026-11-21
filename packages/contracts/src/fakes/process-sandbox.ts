@@ -67,7 +67,9 @@ export class ProcessSandbox implements Sandbox {
 
     return new Promise<ExecResult>((resolvePromise, reject) => {
       const started = Date.now();
-      const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+      // Own process group, so a timeout kills the command's children too (a shell that
+      // forks would otherwise leave them holding the output pipes open).
+      const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const out: Buffer[] = [];
       const err: Buffer[] = [];
       let outBytes = 0;
@@ -83,7 +85,7 @@ export class ProcessSandbox implements Sandbox {
         options.timeoutSeconds !== undefined
           ? setTimeout(() => {
               timedOut = true;
-              child.kill('SIGKILL');
+              killGroup(child.pid);
             }, options.timeoutSeconds * 1000)
           : undefined;
       child.on('error', (error) => {
@@ -100,6 +102,8 @@ export class ProcessSandbox implements Sandbox {
           timedOut,
         });
       });
+      // A command may exit without reading its input; that is not an error.
+      child.stdin.on('error', () => undefined);
       child.stdin.end(options.stdin ?? '');
     });
   }
@@ -148,6 +152,19 @@ export class ProcessSandbox implements Sandbox {
     const rel = relative(root, full);
     if (rel.startsWith('..') || isAbsolute(rel)) throw fail('invalid_input', operation, `${path} is outside the sandbox`);
     return full;
+  }
+}
+
+function killGroup(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, 'SIGKILL');
+  } catch {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // already gone
+    }
   }
 }
 
