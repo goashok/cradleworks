@@ -53,6 +53,7 @@ const fakes = {
   } satisfies Tracker,
   agentRuntime: {
     id: 'fake',
+    requiredHosts: () => [],
     start: async (request) => ({
       runId: request.runId,
       events: none<AgentEvent>(),

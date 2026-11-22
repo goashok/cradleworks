@@ -10,6 +10,7 @@ import {
   type AgentOutcome,
   type AgentRuntime,
   type ExternalRef,
+  type NetworkPolicy,
   type PullRequestRef,
   type RepoRef,
   type Sandbox,
@@ -150,15 +151,16 @@ export class Orchestrator {
       await log.write({ type: 'checkout_cloned', path: checkout.path, repo: project.repo.id });
 
       step = 'sandbox';
+      const network = withHosts(project.config.network, this.#deps.runtime.requiredHosts(profile));
       sandbox = await this.#deps.sandbox.create({
         taskId: shortId(taskId),
         source: checkout,
         baseRef: base,
         branch,
         image: project.config.stack.image,
-        network: project.config.network,
+        network,
       });
-      await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch, baseRef: base });
+      await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch, baseRef: base, network });
 
       step = 'context';
       const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
@@ -249,6 +251,13 @@ export class Orchestrator {
     if (!wi) throw new Error(`no work item ${workItemId}`);
     return wi;
   }
+}
+
+/** The project's network policy plus the hosts the agent itself must reach. */
+function withHosts(policy: NetworkPolicy, hosts: string[]): NetworkPolicy {
+  if (hosts.length === 0) return policy;
+  const base = policy.mode === 'allowlist' ? policy.allow : [];
+  return { mode: 'allowlist', allow: [...new Set([...base, ...hosts])] };
 }
 
 function findTask(wi: WorkItem, taskId: string): Task {

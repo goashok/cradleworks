@@ -203,6 +203,22 @@ describe('Build station', () => {
     expect(readdirSync(join(root, 'sandboxes'))).toEqual([]);
   });
 
+  it('adds the hosts the agent needs to the sandbox network policy', async () => {
+    const withAllow = { ...project, config: { ...config, network: { mode: 'allowlist' as const, allow: ['registry.npmjs.org'] } } };
+    const runtime = new ScriptedAgentRuntime(() => writesHello, { hosts: ['api.example.test'] });
+    const o = orchestrator([], { runtime });
+    const policies = [];
+    for (const p of [project, withAllow]) {
+      const { workItemId, taskId } = await o.submitTask({ project: p, title: 'Add hello.txt', body: '', requester: 'alex' });
+      const { runId } = await o.runBuild(p, workItemId, taskId);
+      policies.push((await store.readStream(runId)).find((e) => e.type === 'sandbox_created')!.payload);
+    }
+    expect(policies).toMatchObject([
+      { network: { mode: 'allowlist', allow: ['api.example.test'] } },
+      { network: { mode: 'allowlist', allow: ['registry.npmjs.org', 'api.example.test'] } },
+    ]);
+  });
+
   it('rebuilds the same state from the log after a restart', async () => {
     const o = orchestrator(writesHello);
     const { workItemId, taskId } = await submit(o);

@@ -1,13 +1,13 @@
 // The per-run stream: every step a station takes and every agent event, in order.
 // A reviewer reads this to see exactly what happened and what the agent was shown.
 
-import type { AgentEvent, StateStore } from '@cradleworks/interfaces';
+import type { AgentEvent, NetworkPolicy, StateStore } from '@cradleworks/interfaces';
 
 export type RunLogEntry =
   | { type: 'run_context'; workItemId: string; taskId: string; station: string }
   | { type: 'context_pack_built'; files: Array<{ path: string; bytes: number }>; dropped: string[]; budgetBytes: number }
   | { type: 'checkout_cloned'; path: string; repo: string }
-  | { type: 'sandbox_created'; sandboxId: string; branch: string; baseRef: string }
+  | { type: 'sandbox_created'; sandboxId: string; branch: string; baseRef: string; network: NetworkPolicy }
   | { type: 'agent_started'; agent: string; model: string; limits: object }
   | { type: 'agent_event'; event: AgentEvent }
   | { type: 'changes_committed'; sha: string }

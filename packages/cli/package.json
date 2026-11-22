@@ -11,7 +11,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@cradleworks/adapter-claude-code": "workspace:*",
     "@cradleworks/adapter-github": "workspace:*",
+    "@cradleworks/adapter-local": "workspace:*",
     "@cradleworks/config": "workspace:*",
     "@cradleworks/contracts": "workspace:*",
     "@cradleworks/core": "workspace:*",

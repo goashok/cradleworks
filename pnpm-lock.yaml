@@ -176,7 +176,30 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5)(yaml@2.9.1))
 
+  packages/adapter-claude-code:
+    dependencies:
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@cradleworks/adapter-local':
+        specifier: workspace:*
+        version: link:../adapter-local
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/adapter-github:
+    dependencies:
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
+  packages/adapter-local:
     dependencies:
       '@cradleworks/interfaces':
         specifier: workspace:*
@@ -188,9 +211,15 @@ importers:
 
   packages/cli:
     dependencies:
+      '@cradleworks/adapter-claude-code':
+        specifier: workspace:*
+        version: link:../adapter-claude-code
       '@cradleworks/adapter-github':
         specifier: workspace:*
         version: link:../adapter-github
+      '@cradleworks/adapter-local':
+        specifier: workspace:*
+        version: link:../adapter-local
       '@cradleworks/config':
         specifier: workspace:*
         version: link:../config

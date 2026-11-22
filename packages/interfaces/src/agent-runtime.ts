@@ -45,5 +45,10 @@ export interface AgentRun {
 
 export interface AgentRuntime {
   readonly id: string;
+  /**
+   * Hosts the agent must reach from inside the sandbox (its model API), in allow-list
+   * form. The core adds them to the sandbox's network policy for the run.
+   */
+  requiredHosts(profile: AgentProfile): string[];
   start(request: AgentRunRequest): Promise<AgentRun>;
 }

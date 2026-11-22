@@ -3,7 +3,9 @@
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ClaudeCodeRuntime, resolveClaudeAuth } from '@cradleworks/adapter-claude-code';
 import { GitHubSourceControl, githubRepoRef } from '@cradleworks/adapter-github';
+import { DockerSandbox } from '@cradleworks/adapter-local';
 import { LocalGitSourceControl, localRepoRef, ProcessSandbox } from '@cradleworks/contracts/fakes';
 import type { AgentRuntime, RepoRef, Sandbox, SourceControl } from '@cradleworks/interfaces';
 
@@ -16,7 +18,8 @@ export interface SourceControlEntry {
 export interface Registry {
   sourceControl: Record<string, SourceControlEntry>;
   sandbox: Record<string, (factoryHome: string) => Sandbox>;
-  runtime: Record<string, () => AgentRuntime>;
+  /** Gets the sandbox the run will use, since an agent runs inside it. */
+  runtime: Record<string, (context: { sandbox: Sandbox; env: Record<string, string | undefined> }) => AgentRuntime>;
   /** Sandboxes that do not isolate; the CLI warns when one is used. */
   testOnlySandboxes: ReadonlySet<string>;
 }
@@ -42,18 +45,18 @@ export function defaultRegistry(): Registry {
       },
     },
     sandbox: {
+      'local-docker': (home) => new DockerSandbox({ rootDir: resolve(home, 'sandboxes') }),
       process: (home) => new ProcessSandbox(resolve(home, 'sandboxes')),
     },
-    runtime: {},
+    runtime: {
+      'cli-agent': ({ sandbox, env }) => new ClaudeCodeRuntime({ sandbox, auth: resolveClaudeAuth({ env }) }),
+    },
     testOnlySandboxes: new Set(['process']),
   };
 }
 
 /** When an adapter id is known but not built yet, say which milestone brings it. */
 export const PLANNED_ADAPTERS: Record<string, string> = {
-  'local-docker': 'M1-8 (local Docker sandbox)',
-  'cli-agent': 'M1-9 (headless CLI agent runtime)',
-  'claude-code': 'M1-9 (headless CLI agent runtime)',
   'github-actions': 'M2 (CI adapter)',
   'github-issues': 'M3 (tracker adapter)',
 };

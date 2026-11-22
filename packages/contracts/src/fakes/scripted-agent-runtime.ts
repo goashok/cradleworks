@@ -29,10 +29,18 @@ export class ScriptedAgentRuntime implements AgentRuntime {
   readonly id = 'scripted';
   readonly #script: Script;
   readonly #runs = new Set<string>();
+  readonly #hosts: string[];
 
-  constructor(script: Script) {
+  /** `hosts`: what `requiredHosts` reports, so tests can check the core adds them. */
+  constructor(script: Script, options: { hosts?: string[] } = {}) {
     this.#script = script;
+    this.#hosts = options.hosts ?? [];
   }
+
+  requiredHosts(): string[] {
+    return [...this.#hosts];
+  }
+
 
   async start(request: AgentRunRequest): Promise<AgentRun> {
     if (this.#runs.has(request.runId)) throw new AdapterError('conflict', `run ${request.runId} already started`, { adapter: this.id, operation: 'start' });

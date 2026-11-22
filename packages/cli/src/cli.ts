@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { ConfigError, loadProjectConfig } from '@cradleworks/config';
 import { Orchestrator, WorkItemRepository, type Project, type WorkItem } from '@cradleworks/core';
+import type { AgentRuntime } from '@cradleworks/interfaces';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
@@ -193,12 +194,19 @@ async function openProject(io: CliEnv): Promise<ProjectContext> {
     io.stderr(`warning: sandbox "${config.adapters.sandbox}" is for testing only and does not isolate the agent\n`);
   }
 
+  const sandbox = makeSandbox(home);
+  let runtime: AgentRuntime;
+  try {
+    runtime = makeRuntime({ sandbox, env: io.env });
+  } catch (error) {
+    throw new UsageError(`cannot set up runtime "${config.adapters.runtime}": ${(error as Error).message}`);
+  }
   const store = new SqliteStateStore({ path: join(home, 'state.db') });
   const orchestrator = new Orchestrator({
     store,
     sourceControl: scmEntry.create(),
-    sandbox: makeSandbox(home),
-    runtime: makeRuntime(),
+    sandbox,
+    runtime,
     workRoot: join(home, 'work'),
   });
   return { repoRoot, project: { repo, config }, orchestrator, close: () => store.close() };

@@ -13,6 +13,7 @@ packages/
   contracts/    contract test suites every adapter must pass, and fakes that pass them
   adapter-github/  GitHub SourceControl (git over HTTPS + REST); signs in with GITHUB_TOKEN or the gh login
   adapter-local/   Sandbox: one git worktree + one Docker container per task (`local-docker`)
+  adapter-claude-code/  AgentRuntime: Claude Code headless inside the sandbox (`runtime: cli-agent`, `agent: claude-code`)
   cli/          the `factory` command
 defaults/
   factory.yaml  factory-wide defaults for any key a project omits
@@ -45,6 +46,17 @@ factory status <work-item-id> # tasks, PRs, runs and gate decisions
 ```
 
 Until the package is installed globally, run it as `packages/cli/src/main.ts`. State lives in `~/.cradleworks` (override with `CRADLEWORKS_HOME`).
+
+## Claude Code credentials
+
+The agent runs inside the task's sandbox, so the sandbox image (`stack.image`) needs a `claude` command and git; `packages/adapter-claude-code/image/Dockerfile` is a minimal example. Two ways to sign in:
+
+- **API key** (billed to the API account): `ANTHROPIC_API_KEY`, or the macOS Keychain:
+  `security add-generic-password -s cradleworks-anthropic-api-key -a "$USER" -w`
+- **Subscription**: run `claude setup-token`, then `CLAUDE_CODE_OAUTH_TOKEN`, or the Keychain:
+  `security add-generic-password -s cradleworks-claude-oauth-token -a "$USER" -w`
+
+With both present the API key is used; `CRADLEWORKS_CLAUDE_AUTH=subscription` picks the subscription. The model API host is added to the sandbox's network allow-list for the run; nothing else is opened. The live contract test is opt-in: `CRADLEWORKS_CLAUDE_CONTRACT=1 pnpm vitest run packages/adapter-claude-code` (Haiku, each run capped at $0.25).
 
 ## Sandbox network
 

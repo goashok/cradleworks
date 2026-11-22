@@ -101,8 +101,18 @@ describe('factory submit', () => {
       rmSync(outside, { recursive: true, force: true });
     }
 
-    writeFileSync(join(checkout, '.factory', 'factory.yaml'), FACTORY_YAML.replace('runtime: scripted', 'runtime: cli-agent'));
-    expect((await factory(['submit', taskFile])).stderr).toMatch(/runtime adapter "cli-agent" is not available yet; it arrives in M1-9/);
+    writeFileSync(join(checkout, '.factory', 'factory.yaml'), FACTORY_YAML.replace('runtime: scripted', 'runtime: nope'));
+    expect((await factory(['submit', taskFile])).stderr).toMatch(/unknown runtime adapter "nope" \(known: scripted\)/);
+
+    const noAuth = registry();
+    noAuth.runtime.scripted = () => {
+      throw new Error('No Claude Code credentials found.');
+    };
+    writeFileSync(join(checkout, '.factory', 'factory.yaml'), FACTORY_YAML);
+    expect(await factory(['submit', taskFile], checkout, noAuth)).toMatchObject({
+      code: 2,
+      stderr: expect.stringMatching(/cannot set up runtime "scripted": No Claude Code credentials found/),
+    });
 
     writeFileSync(join(checkout, '.factory', 'factory.yaml'), `${FACTORY_YAML}concurrency: 0\n`);
     const bad = await factory(['submit', taskFile]);
