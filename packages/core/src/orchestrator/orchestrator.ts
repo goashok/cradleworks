@@ -440,8 +440,7 @@ export class Orchestrator {
       return await this.#fail(wi, log, runId, taskId, step, message, 'failed');
     } finally {
       if (sandbox) {
-        await this.#deps.sandbox.destroy(sandbox).catch(() => undefined);
-        await log.write({ type: 'sandbox_destroyed', sandboxId: sandbox.id }).catch(() => undefined);
+        await this.#teardown(log, sandbox);
       }
       rmSync(checkoutDir, { recursive: true, force: true });
     }
@@ -589,8 +588,7 @@ export class Orchestrator {
     } finally {
       ciAbort.abort();
       if (sandbox) {
-        await this.#deps.sandbox.destroy(sandbox).catch(() => undefined);
-        await log.write({ type: 'sandbox_destroyed', sandboxId: sandbox.id }).catch(() => undefined);
+        await this.#teardown(log, sandbox);
       }
       rmSync(checkoutDir, { recursive: true, force: true });
     }
@@ -1084,8 +1082,7 @@ export class Orchestrator {
       return { ok: false, error: `${step}: ${message}`, cost: 0 };
     } finally {
       if (sandbox) {
-        await this.#deps.sandbox.destroy(sandbox).catch(() => undefined);
-        await log.write({ type: 'sandbox_destroyed', sandboxId: sandbox.id }).catch(() => undefined);
+        await this.#teardown(log, sandbox);
       }
       rmSync(checkoutDir, { recursive: true, force: true });
     }
@@ -1151,8 +1148,7 @@ export class Orchestrator {
       return { tests, cost };
     } finally {
       if (sandbox) {
-        await this.#deps.sandbox.destroy(sandbox).catch(() => undefined);
-        await log.write({ type: 'sandbox_destroyed', sandboxId: sandbox.id }).catch(() => undefined);
+        await this.#teardown(log, sandbox);
       }
     }
   }
@@ -1332,6 +1328,17 @@ export class Orchestrator {
     await this.#emit(wi.id, [
       { type: 'gate_decided', at: this.#clock(), decisionId: this.#id('gate'), gate: 'change_approval', subjectId: task.id, mode: d.mode, decidedBy: d.decidedBy, verdict: d.verdict, reason: d.reason },
     ]);
+  }
+
+  /** Records what the sandbox's network control allowed and refused, then destroys it. */
+  async #teardown(log: RunLog, sandbox: SandboxHandle): Promise<void> {
+    const decisions = await this.#deps.sandbox.networkLog?.(sandbox).catch(() => undefined);
+    if (decisions?.length) {
+      const denied = decisions.filter((d) => d.decision === 'deny').length;
+      await log.write({ type: 'network_decisions', allowed: decisions.length - denied, denied, decisions }).catch(() => undefined);
+    }
+    await this.#deps.sandbox.destroy(sandbox).catch(() => undefined);
+    await log.write({ type: 'sandbox_destroyed', sandboxId: sandbox.id }).catch(() => undefined);
   }
 
   /**

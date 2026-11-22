@@ -13,7 +13,7 @@ import {
   ScriptedAgentRuntime,
   type ScriptStep,
 } from '@cradleworks/contracts/fakes';
-import type { AgentRunRequest } from '@cradleworks/interfaces';
+import type { AgentRunRequest, NetworkDecision } from '@cradleworks/interfaces';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProjectConfig } from '../config/types.ts';
 import { assertFactoryBranch, assertMergeTarget, protectedPathsIn, scanDiffForSecrets } from './hard-rules.ts';
@@ -74,6 +74,16 @@ const config: ProjectConfig = {
   network: { mode: 'none', allow: [] },
 };
 
+/** A process sandbox that reports network decisions, as a sandbox with an egress proxy does. */
+class LoggedSandbox extends ProcessSandbox {
+  async networkLog(): Promise<NetworkDecision[]> {
+    return [
+      { at: '2026-11-22T12:00:00Z', method: 'GATEWAY', host: 'model.example', port: 443, decision: 'allow', path: '/v1/messages' },
+      { at: '2026-11-22T12:00:01Z', method: 'CONNECT', host: 'paste.example', port: 443, decision: 'deny', reason: 'not on the allow-list' },
+    ];
+  }
+}
+
 describe('hard rules in a build', () => {
   let root: string;
   let bare: string;
@@ -95,7 +105,7 @@ describe('hard rules in a build', () => {
     return new Orchestrator({
       store,
       sourceControl: new LocalGitSourceControl(),
-      sandbox: new ProcessSandbox(join(root, 'sandboxes')),
+      sandbox: new LoggedSandbox(join(root, 'sandboxes')),
       runtime,
       workRoot: join(root, 'work'),
       newId: (kind) => `${kind}_${String(++ids).padStart(8, '0')}`,
@@ -132,6 +142,8 @@ describe('hard rules in a build', () => {
     const build = wi.runs.find((r) => r.station === 'build')!;
     const denied = (await store.readStream(build.id)).filter((e) => e.type === 'command_denied').map((e) => (e.payload as { detail: string }).detail);
     expect(denied).toEqual(['git push origin main', 'curl https://example.com']);
+    const network = (await store.readStream(build.id)).find((e) => e.type === 'network_decisions')?.payload as { allowed: number; denied: number };
+    expect(network).toMatchObject({ allowed: 1, denied: 1 });
   });
 
   it('pushes nothing when the change adds a secret, and says where without quoting it', async () => {

@@ -1,7 +1,7 @@
 // The per-run stream: every step a station takes and every agent event, in order.
 // A reviewer reads this to see exactly what happened and what the agent was shown.
 
-import type { AgentEvent, NetworkPolicy, StateStore } from '@cradleworks/interfaces';
+import type { AgentEvent, NetworkDecision, NetworkPolicy, StateStore } from '@cradleworks/interfaces';
 import type { CheckResult, CiResult, ReviewResult, VerifyVerdict } from '../domain/types.ts';
 
 export type RunLogEntry =
@@ -31,7 +31,8 @@ export type RunLogEntry =
   | { type: 'budget_stopped'; reason: string }
   | { type: 'secrets_found'; findings: Array<{ file: string; line: number; kind: string }> }
   | { type: 'protected_paths_changed'; paths: string[] }
-  | { type: 'command_denied'; tool: string; detail: string };
+  | { type: 'command_denied'; tool: string; detail: string }
+  | { type: 'network_decisions'; allowed: number; denied: number; decisions: NetworkDecision[] };
 
 export class RunLog {
   readonly runId: string;

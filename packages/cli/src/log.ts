@@ -78,6 +78,13 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
       return line('pr', String(p.url ?? p.id ?? ''));
     case 'run_ended':
       return line('run', `ended ${String(p.outcome ?? '')}${p.reason ? `: ${String(p.reason)}` : ''}`);
+    case 'network_decisions': {
+      const decisions = (p.decisions as Array<{ method: string; host: string; port: number; decision: string; reason?: string; path?: string }> | undefined) ?? [];
+      const head = `${Number(p.allowed ?? 0)} allowed, ${Number(p.denied ?? 0)} denied`;
+      const shown = full ? decisions : decisions.filter((d) => d.decision === 'deny');
+      const rows = shown.map((d) => `  ${d.decision === 'deny' ? '✗' : '✓'} ${d.method} ${d.host}:${d.port}${d.path ? ` ${d.path}` : ''}${d.reason ? ` (${d.reason})` : ''}`);
+      return line('network', rows.length ? `${head}\n${rows.join('\n')}` : head);
+    }
     case 'sandbox_destroyed':
       return line('sandbox', `${String(p.sandboxId ?? '')} destroyed`);
     case 'check_ran': {

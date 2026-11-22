@@ -321,6 +321,10 @@ export class DockerSandbox implements Sandbox {
       .filter((d) => !d.ready);
   }
 
+  networkLog(sandbox: SandboxHandle): Promise<EgressDecision[]> {
+    return this.egressLog(sandbox);
+  }
+
   async destroy(sandbox: SandboxHandle): Promise<void> {
     const entry = this.#entries.get(sandbox.id);
     if (!entry) return;

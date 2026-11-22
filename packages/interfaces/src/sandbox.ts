@@ -40,6 +40,18 @@ export interface ExecOptions {
   stdin?: string;
 }
 
+/** One request the sandbox's egress control allowed or refused. */
+export interface NetworkDecision {
+  at: string;
+  /** HTTP method, `CONNECT` for a tunnel, or `GATEWAY` for a credential gateway request. */
+  method: string;
+  host: string;
+  port: number;
+  decision: 'allow' | 'deny';
+  reason?: string;
+  path?: string;
+}
+
 export interface CredentialGatewayInput {
   /** HTTPS host the gateway forwards to. */
   host: string;
@@ -86,6 +98,8 @@ export interface Sandbox {
    * can't (then the caller falls back to giving the sandbox the credential).
    */
   credentialGateway?(sandbox: SandboxHandle, input: CredentialGatewayInput): Promise<string | undefined>;
+  /** Optional. Every network decision the sandbox's egress control made, oldest first. */
+  networkLog?(sandbox: SandboxHandle): Promise<NetworkDecision[]>;
   /** Removes the sandbox and its checkout. Safe to call twice. */
   destroy(sandbox: SandboxHandle): Promise<void>;
 }
