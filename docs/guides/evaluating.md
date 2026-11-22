@@ -83,6 +83,34 @@ What we took from it:
 - **Graders hit flaky tests too.** The planted flaky test failed twice while grading correct
   code, so the grader now retries non-hidden failures once and reports them.
 
+## With Verify: the M2 baseline (2026-11-22)
+
+The same 29 tasks through milestone M2: Build, then Verify (the project's checks, CI, and a
+reviewer agent that reads the diff against the project's rules), with rework when the reviewer
+sends a change back.
+
+**26 of 29 passed again**, though not the same 26: the "tidy up" refactor now made its change and
+passed, and a large refactor that passed in M1 failed. What M2 adds is Verify's own verdict, and
+how often it matches the grader:
+
+| | Grader: pass | Grader: fail |
+| --- | --- | --- |
+| Verify: ready to merge | 22 | 3 |
+| Verify: escalated or failed | 4 | 0 |
+
+- **The three wrong "ready" verdicts are the requirements nobody wrote down**: the vulnerable
+  dependency, the framework upgrade that changed error responses, and a module boundary that
+  meant "no imports at all" rather than "not these classes". The reviewer judges against the
+  project's rules, and no rule said any of this. Writing such rules down (no dependency with a
+  known vulnerability; error responses are part of the API; what a module boundary means) is the
+  cheapest fix, and the next thing to measure.
+- **Two of the four wrong rejections were infrastructure**: a reviewer killed for memory, and a
+  reviewer that answered without its verdict block. Both escalated to a person rather than
+  passing, which is the safe failure.
+- **Rework rounds paid off**: three tasks went through one or two; two of them then passed.
+- **A usage limit stopped a whole batch.** On a subscription, every build after the five-hour
+  limit failed. The factory now pauses on a usage limit instead (`factory retry` resumes).
+
 ## From issues: the M3 exit check (2026-11-22)
 
 The same tasks can be run the way a team would use the factory: each task's issue text is filed
