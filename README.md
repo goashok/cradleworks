@@ -1,69 +1,136 @@
 # Cradleworks
 
-A software factory for building with AI agents: a thin, vendor-neutral core that drives existing coding agents through adapters, from an issue to a reviewed, merged PR.
+**Cradleworks is a software factory.** You hand it a written task. It runs a coding agent on that
+task in a locked-down sandbox, and it hands you back a pull request. Every step the agent took is
+recorded, so you can replay exactly what it did.
 
-## Layout
-
-```text
-packages/
-  core/         pipeline, state machine, domain model, policies (no vendor names)
-  interfaces/   adapter interfaces and shared event types
-  store-sqlite/ StateStore on SQLite (node:sqlite built-in, append-only event log)
-  config/       loads .factory/factory.yaml over defaults/factory.yaml, with line-numbered errors
-  contracts/    contract test suites every adapter must pass, and fakes that pass them
-  adapter-github/  GitHub SourceControl (git over HTTPS + REST); signs in with GITHUB_TOKEN or the gh login
-  adapter-local/   Sandbox: one git worktree + one Docker container per task (`local-docker`)
-  adapter-claude-code/  AgentRuntime: Claude Code headless inside the sandbox (`runtime: cli-agent`, `agent: claude-code`)
-  cli/          the `factory` command
-defaults/
-  factory.yaml  factory-wide defaults for any key a project omits
-scripts/
-  check-core-rule.ts   fails CI if the core names a vendor, stack or project
+```console
+$ factory submit tasks/farewell.md
+Submitted "Add a farewell function" as wi_5eb83867-…
+Building task_6dca1aa4-…...
+Opened https://github.com/you/your-repo/pull/12
+  branch factory/task-6dca1aa4
+  run    run_d4d34200-…
 ```
 
-More packages (vendor adapters, orchestrator, CLI) arrive with milestone M1.
+Cradleworks does not write code itself. It drives the coding agents that already exist (Claude Code
+today), and it adds what one person typing into one chat window lacks: the same setup every
+time, isolation, a record of every step, limits on spend, and a pipeline that can grow gates and
+checks around the agent.
 
-## Adding an adapter
+## Why
 
-Implement the interface from `@cradleworks/interfaces`, then run its suite from `@cradleworks/contracts` (`describeSourceControlContract`, `describeSandboxContract`, `describeAgentRuntimeContract`, `describeStateStoreContract`) against a real instance. The adapter is done when its suite passes. Contract suites against real services are opt-in, e.g. `CRADLEWORKS_GITHUB_CONTRACT=1 pnpm test` (uses a private `cradleworks-contract-scratch` repo on the signed-in account, created on first run). `@cradleworks/contracts/fakes` has working fakes for tests that need an adapter without accounts, containers or a model.
+Coding agents can now finish real tasks, but most teams still use them one chat at a time. What
+comes out depends on who asked, what they pasted in and how carefully they read the result. That
+doesn't scale to many people or many tasks at once. Cradleworks makes those parts of the work
+shared and repeatable:
+
+| Instead of… | Cradleworks gives you… |
+| --- | --- |
+| Context pasted by hand | Project rules in the repo (`.factory/rules/`), loaded into every run |
+| An agent running on your laptop with your credentials | A fresh container per task. It can reach only the hosts you list, and it never sees your GitHub credentials. |
+| "Trust me, it works" | A pull request, plus an event log of every tool call, file change and decision |
+| Unknown cost | A spend cap per task, and token and dollar usage recorded on every run |
+| One vendor baked in | Every outside service behind an interface. GitHub and Claude Code are adapters, not assumptions. |
+
+## What it does today
+
+Cradleworks is early. This is the honest picture:
+
+- ✅ **Task → pull request.** `factory submit` turns a Markdown task into a branch, a commit and a PR.
+  It works on GitHub, or on a plain git repo on disk for trying it out.
+- ✅ **Isolated runs.** Each task gets its own git worktree and Docker container. All
+  capabilities are dropped, and outbound network goes through an allow-list proxy.
+- ✅ **Full record.** Every step goes to an append-only event log. `factory log <run>` replays it.
+- ✅ **Per-project setup.** One `.factory/` folder describes a project: image, commands, rules and
+  limits. `factory validate` checks it.
+- ✅ **Measured.** It has been run against a private suite of 30 graded tasks on two reference
+  projects. The first baseline passed 26 of 29, for $2.27 in total ([results](docs/guides/evaluating.md)).
+- 🚧 **Not yet:** verifying the agent's work before the PR (M2), turning GitHub issues into specs
+  and plans (M3), enforced approval gates and per-user budgets (M2–M4), and a web console (M6).
+  Today a human reviews every PR. See the [roadmap](docs/roadmap.md).
+
+## How it works, in one picture
+
+```text
+ task.md ──► factory submit
+               │
+               ▼
+        ┌─────────────────── Build station ────────────────────┐
+        │ 1. clone the repo                                    │
+        │ 2. start a sandbox (worktree + Docker, network       │
+        │    limited to the allow-list)                        │
+        │ 3. load the project rules (.factory/rules/*.md)      │
+        │ 4. run the agent inside the sandbox, with limits     │
+        │ 5. commit, push the branch, open the pull request    │
+        └──────────────────────────────────────────────────────┘
+               │                                   │
+               ▼                                   ▼
+         pull request                  event log (~/.cradleworks)
+                                       factory status / factory log
+```
+
+The longer version is in [How it works](docs/how-it-works.md).
+
+## Try it
+
+The [quick start](docs/quickstart.md) runs the factory on a tiny example project in about ten
+minutes. You need Node 22.18+, Docker, git and a Claude credential. No GitHub account is
+needed.
+
+```sh
+git clone https://github.com/goashok/cradleworks && cd cradleworks
+npx pnpm@12.18.0 install
+alias factory="node $PWD/packages/cli/src/main.ts"
+```
+
+## Documentation
+
+**Start here**
+- [Quick start](docs/quickstart.md): your first factory run, end to end
+- [How it works](docs/how-it-works.md): work items, tasks, runs, stations, the event log and adapters
+
+**Guides**
+- [Add your own project](docs/guides/add-a-project.md): write a `.factory/` folder and switch to GitHub
+- [Write good tasks](docs/guides/writing-tasks.md): what to put in a task file, and what the agent sees
+- [Follow and replay runs](docs/guides/runs-and-logs.md): `status`, `log`, and where state lives
+- [Sandbox and credentials](docs/guides/security.md): what the agent can and cannot reach
+- [Measure the factory](docs/guides/evaluating.md): the eval suite and the first baseline
+- [Write an adapter](docs/guides/writing-an-adapter.md): plug in another SCM, sandbox or agent
+
+**Reference**
+- [Configuration](docs/reference/configuration.md): every `factory.yaml` key, and which ones take effect today
+- [CLI](docs/reference/cli.md): every command, option and exit code
+- [Roadmap](docs/roadmap.md): milestones, what's done and what's next
 
 ## Develop
 
-Requires Node 22.18+ (CI uses the version in `.nvmrc`) and pnpm (pinned in `package.json`; run `npx pnpm@12.18.0` if it is not installed).
-
 ```sh
-pnpm install
-pnpm check   # core rule, typecheck, tests
+npx pnpm@12.18.0 install
+pnpm check      # core rule, typecheck, all tests
 ```
 
-## Use
+The repository is a pnpm workspace of small packages:
 
-```sh
-# inside a repository with .factory/factory.yaml
-factory submit task.md        # task.md starts with "# Title"; builds it and opens a PR
-factory status                # list work items
-factory status <work-item-id> # tasks, PRs, runs and gate decisions
-factory validate [<dir>]      # check a project's .factory/ setup without running anything
-factory log <run-id>          # replay a run from its event log (--full for whole outputs, --json for raw events)
+```text
+packages/
+  core/                 pipeline, state machine, domain model; names no vendor
+  interfaces/           the adapter interfaces and the normalised agent events
+  contracts/            contract test suites every adapter must pass, plus working fakes
+  config/               loads .factory/factory.yaml over defaults/factory.yaml
+  store-sqlite/         StateStore: append-only event log on SQLite
+  adapter-github/       SourceControl for GitHub
+  adapter-local/        Sandbox: git worktree + Docker container + egress proxy
+  adapter-claude-code/  AgentRuntime: Claude Code, headless, inside the sandbox
+  cli/                  the `factory` command
+defaults/factory.yaml   defaults for any key a project leaves out
+examples/hello-node/    the quick start project
 ```
 
-Until the package is installed globally, run it as `packages/cli/src/main.ts`. State lives in `~/.cradleworks` (override with `CRADLEWORKS_HOME`).
+**The core rule:** nothing in `packages/core` may name a vendor, stack or project, and the core
+imports only `@cradleworks/interfaces`, Node built-ins and its own files. That's what keeps
+GitHub, Docker and Claude Code replaceable. `pnpm check:core-rule` enforces it in CI.
 
-## Claude Code credentials
+## License
 
-The agent runs inside the task's sandbox, so the sandbox image (`stack.image`) needs a `claude` command and git; `packages/adapter-claude-code/image/Dockerfile` is a minimal example. Two ways to sign in:
-
-- **API key** (billed to the API account): `ANTHROPIC_API_KEY`, or the macOS Keychain:
-  `security add-generic-password -s cradleworks-anthropic-api-key -a "$USER" -w`
-- **Subscription**: run `claude setup-token`, then `CLAUDE_CODE_OAUTH_TOKEN`, or the Keychain:
-  `security add-generic-password -s cradleworks-claude-oauth-token -a "$USER" -w`
-
-With both present the API key is used; `CRADLEWORKS_CLAUDE_AUTH=subscription` picks the subscription. The model API host is added to the sandbox's network allow-list for the run; nothing else is opened. The live contract test is opt-in: `CRADLEWORKS_CLAUDE_CONTRACT=1 pnpm vitest run packages/adapter-claude-code` (Haiku, each run capped at $0.25).
-
-## Sandbox network
-
-`sandbox.network` in `.factory/factory.yaml` is enforced by a per-sandbox egress proxy: the sandbox sits on an internal Docker network with no route out, and the proxy lets through only listed hosts (`host`, `host:port`, or `*.domain`; no port means 80 and 443). Names that resolve to private or loopback addresses are refused. Tools find the proxy through the usual `HTTP(S)_PROXY` variables and `JAVA_TOOL_OPTIONS`.
-
-## The core rule
-
-Nothing in `packages/core` may name a vendor, stack or project, and the core may import only `@cradleworks/interfaces`, Node built-ins and its own files. `pnpm check:core-rule` enforces this.
+[MIT](LICENSE)

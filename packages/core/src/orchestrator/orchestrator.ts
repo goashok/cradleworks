@@ -287,7 +287,7 @@ function prBody(taskBody: string, summary: string | undefined, workItemId: strin
     '## Factory',
     `- Work item: \`${workItemId}\``,
     `- Task: \`${taskId}\``,
-    `- Run: \`${runId}\` (replay with \`factory replay ${runId}\`)`,
+    `- Run: \`${runId}\` (replay with \`factory log ${runId}\`)`,
     `- Context files: ${contextFiles.length > 0 ? contextFiles.map((f) => `\`${f}\``).join(', ') : 'none'}`,
     '',
     '_Opened by Cradleworks. Verification (station 6) arrives in M2._',

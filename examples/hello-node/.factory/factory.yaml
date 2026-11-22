@@ -1,0 +1,30 @@
+# Cradleworks settings for this project. Keys not set here come from defaults/factory.yaml.
+project: hello-node
+
+adapters:
+  scm: local-git          # a git repo on disk acts as the remote; use `github` for real PRs
+  ci: github-actions      # not used yet (Verify station, M2)
+  tracker: github-issues  # not used yet (intake from issues, M3)
+  sandbox: local-docker   # one Docker container per task
+  runtime: cli-agent
+
+runtime:
+  agent: claude-code
+  model: claude-sonnet-5-5
+
+stack:
+  image: cradleworks/hello-node-dev:1   # docker build -t cradleworks/hello-node-dev:1 .factory/image
+  build: node --check src/greet.js
+  test: npm test
+
+context:
+  include: [src/, test/, README.md]
+  rules: [.factory/rules/*.md]
+
+budgets:
+  per_task_usd: 1
+
+sandbox:
+  network:
+    mode: allowlist
+    allow: []             # the model API is added for each run; nothing else is reachable
