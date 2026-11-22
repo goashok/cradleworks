@@ -50,6 +50,7 @@ import {
   plannerPrompt,
   questionsComment,
   repliesAfter,
+  reposSection,
   slug,
   specBody,
   specComment,
@@ -632,7 +633,7 @@ export class Orchestrator {
       role: 'specifier',
       station: 'specify',
       rolePrompt: (files) => specifierPrompt(files),
-      input: specifierInput(item, { ...(previous ? { previous } : {}), ...(rejection ? { rejection } : {}), ...(wi.specQuestions ? { questionsAsked: wi.specQuestions } : {}) }),
+      input: specifierInput(item, { repos: { main: project.config.project, related: Object.keys(project.related ?? {}) }, ...(previous ? { previous } : {}), ...(rejection ? { rejection } : {}), ...(wi.specQuestions ? { questionsAsked: wi.specQuestions } : {}) }),
     });
     const answer = done.ok ? parseSpecAnswer(done.summary, !wi.specQuestions) : { kind: 'unreadable' as const, reason: done.error };
     await log.write({ type: 'spec_answer', kind: answer.kind });
@@ -791,7 +792,8 @@ export class Orchestrator {
     if (mode === 'ai') {
       const doc = (await this.#specs.get(spec.specId, spec.version)) ?? fail('spec not found');
       const item = await this.#tracker().getItem(wi.source);
-      const check = await this.#check(project, wi, 'spec', `# Spec check\n\n## The request: ${item.title}\n\n${item.body.trim()}\n\n## The spec, version ${doc.version}: ${doc.title}\n\n${specBody(doc)}`);
+      const repos = reposSection({ main: project.config.project, related: Object.keys(project.related ?? {}) }).join('\n');
+      const check = await this.#check(project, wi, 'spec', `# Spec check\n\n## The request: ${item.title}\n\n${item.body.trim()}${repos ? `\n${repos}` : ''}\n\n## The spec, version ${doc.version}: ${doc.title}\n\n${specBody(doc)}`);
       await this.#decideSpec(wi, { mode, verdict: check.verdict, decidedBy: check.by, reason: check.reasons.join(' ') || 'the spec check passed' }, onProgress);
       await this.#say(wi.source, checkComment('Spec', check));
       return true;

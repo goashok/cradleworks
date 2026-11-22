@@ -245,6 +245,11 @@ describe('issue flow', () => {
     const client: Project = { repo: localRepoRef(clientBare), config: { ...baseConfig, project: 'client' } };
     const withClient = { ...project, config: { ...baseConfig, gates: { ...baseConfig.gates, specApproval: 'skipped' as const } }, related: { client } };
     const o = orchestrator({
+      specifier: (req) => {
+        expect(req.input).toContain('## Repositories this work can change');
+        expect(req.input).toContain('`client`: a related repository the factory can also change');
+        return [json(SPEC)];
+      },
       planner: (req) => {
         expect(req.input).toContain('`client`: a related repository');
         return [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2] }, { ...PLAN.tasks[1], key: 't2', repo: 'client', criteria: [3] }] })];

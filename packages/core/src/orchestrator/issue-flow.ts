@@ -38,8 +38,22 @@ export function specifierPrompt(contextFiles: string[]): string {
   ].join('\n');
 }
 
-export function specifierInput(item: TrackerItem, context: { previous?: SpecDocument; rejection?: string; questionsAsked?: string[] }): string {
+/** Which repositories the work may change, for the spec agent and the spec check. */
+export function reposSection(repos: { main: string; related: string[] }): string[] {
+  if (repos.related.length === 0) return [];
+  return [
+    '',
+    '## Repositories this work can change',
+    `- \`${repos.main}\`: the one checked out here`,
+    ...repos.related.map((r) => `- \`${r}\`: a related repository the factory can also change`),
+    '',
+    'When the request asks for changes in more than one of them, one spec covers all of it: keep every part in scope, and say in each criterion which repository it is about.',
+  ];
+}
+
+export function specifierInput(item: TrackerItem, context: { previous?: SpecDocument; rejection?: string; questionsAsked?: string[]; repos?: { main: string; related: string[] } }): string {
   const lines = [`# Request: ${item.title}`, '', `Filed by @${item.author.handle ?? item.author.name}.`, '', item.body.trim() || '_(no description)_'];
+  if (context.repos) lines.push(...reposSection(context.repos));
   const people = item.comments.filter((c) => !c.byFactory);
   if (people.length) {
     lines.push('', '## Discussion on the issue');
