@@ -66,7 +66,7 @@ import { RunLog } from './run-log.ts';
 import { assertFactoryBranch, assertMergeTarget, describeSecrets, protectedPathsIn, scanDiffForSecrets, type SecretPattern } from './hard-rules.ts';
 import { checkBudget, extendUserBudget, isBudgetStop, userSpend, type BudgetPeriod, type UserSpend } from './budget.ts';
 import { EventSpecStore } from './spec-store.ts';
-import { combine, evidenceMarkdown, parseReview, reworkFeedback, runChecks, waitForCi, type CiWaitOptions } from './verify.ts';
+import { combine, evidenceMarkdown, isUnreadableReview, parseReview, REVIEW_RETRY_NOTE, reworkFeedback, runChecks, waitForCi, type CiWaitOptions } from './verify.ts';
 import { WorkItemRepository } from './work-item-repository.ts';
 
 export interface OrchestratorDeps {
@@ -519,18 +519,27 @@ export class Orchestrator {
         const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
         const contextFiles = pack.files.map((f) => f.path);
         const limits = { maxWallSeconds: this.#deps.reviewWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
-        await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-        const done = await this.#runAgent(log, {
-          runId,
-          profile,
-          sandbox,
-          rolePrompt: reviewerPrompt(project.config, contextFiles, base),
-          input: reviewInput(task, checks, spec),
-          contextFiles,
-          tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
-          limits,
-        }, { project, workItemId, taskId });
-        cost += done?.total.costUsd ?? 0;
+        // A reviewer whose verdict can't be read, or whose run fails, gets one more run: a lost
+        // verdict says nothing about the change. A second miss still escalates.
+        let done: Extract<AgentEvent, { type: 'done' }> | undefined;
+        for (let reviewAttempt = 1; reviewAttempt <= 2; reviewAttempt++) {
+          await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
+          done = await this.#runAgent(log, {
+            runId: reviewAttempt === 1 ? runId : `${runId}-review2`,
+            profile,
+            sandbox,
+            rolePrompt: reviewerPrompt(project.config, contextFiles, base),
+            input: reviewAttempt === 1 ? reviewInput(task, checks, spec) : `${reviewInput(task, checks, spec)}\n\n${REVIEW_RETRY_NOTE}`,
+            contextFiles,
+            tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
+            limits,
+          }, { project, workItemId, taskId });
+          cost += done?.total.costUsd ?? 0;
+          const lost = done?.outcome === 'failed' && !(done.error && isBudgetStop(done.error));
+          const unreadable = done?.outcome === 'succeeded' && isUnreadableReview(parseReview(done.summary, profile.model));
+          if (reviewAttempt === 2 || !(lost || unreadable)) break;
+          await log.write({ type: 'review_retried', reason: unreadable ? 'the verdict could not be read' : `the run failed${done?.error ? `: ${done.error}` : ''}` });
+        }
         const reviewStop = done?.error;
         if (reviewStop && isBudgetStop(reviewStop)) {
           await log.write({ type: 'step_failed', step: 'review', error: reviewStop });

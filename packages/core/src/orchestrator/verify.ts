@@ -143,12 +143,20 @@ function runSummary(s: CIRunStatus): CiResult['runs'][number] {
 
 // --- reviewer ----------------------------------------------------------------------
 
+const UNREADABLE = "The reviewer's verdict could not be read";
+
+/** Added to the reviewer's input when its first verdict couldn't be read. */
+export const REVIEW_RETRY_NOTE =
+  'Your previous review ended without a verdict that could be read. Review the change again, and end your final message with the JSON object: {"verdict": "pass" | "rework" | "escalate", "risk": "low" | "medium" | "high", "reasons": [...]}.';
+
+export const isUnreadableReview = (r: ReviewResult) => r.verdict === 'escalate' && r.reasons.length === 1 && r.reasons[0]!.startsWith(UNREADABLE);
+
 /**
  * Reads the reviewer's verdict: the last JSON object in its final message, with a
  * `verdict` of pass, rework or escalate. Anything unreadable is an escalation, never a pass.
  */
 export function parseReview(text: string | undefined, model: string): ReviewResult {
-  const unreadable = (why: string): ReviewResult => ({ verdict: 'escalate', risk: 'high', reasons: [`The reviewer's verdict could not be read: ${why}.`], model });
+  const unreadable = (why: string): ReviewResult => ({ verdict: 'escalate', risk: 'high', reasons: [`${UNREADABLE}: ${why}.`], model });
   if (!text || text.trim() === '') return unreadable('it gave no final message');
   const candidates = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]!);
   const braces = lastJsonObject(text);

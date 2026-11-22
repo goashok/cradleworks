@@ -211,6 +211,22 @@ describe('Verify station', () => {
     }
   });
 
+  it('runs the reviewer once more when its verdict cannot be read, and escalates only on a second miss', async () => {
+    const o = orchestrator({ implement: () => [say('Done.'), write('fixed.txt')], review: (_r, n) => [say(n === 1 ? 'I think it is fine.' : PASS)] });
+    const { workItemId, taskId } = await start(o);
+    const out = await o.runTask(project, workItemId, taskId);
+    expect(out, JSON.stringify(out)).toMatchObject({ state: 'ready' });
+    const reviews = requests.filter((r) => r.profile.role === 'reviewer');
+    expect(reviews).toHaveLength(2);
+    expect(reviews[1]!.input).toContain('ended without a verdict that could be read');
+
+    requests.length = 0;
+    const never = orchestrator({ implement: () => [say('Done.'), write('fixed.txt')], review: () => [say('Still thinking.')] });
+    const second = await start(never);
+    expect((await never.runTask(project, second.workItemId, second.taskId)).state).toBe('escalated');
+    expect(requests.filter((r) => r.profile.role === 'reviewer')).toHaveLength(2);
+  });
+
   it('waits for CI on the pushed commit and sends a failure back with the job log', async () => {
     const ci = new FakeCI();
     let pushes = 0;
