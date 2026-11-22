@@ -125,6 +125,42 @@ describe('factory submit', () => {
   });
 });
 
+describe('factory validate', () => {
+  it('checks a project without running anything', async () => {
+    const r = await factory(['validate']);
+    expect(r).toMatchObject({ code: 0, stderr: '' });
+    expect(r.stdout).toContain('project demo, 1 rule file(s), image unused');
+    expect(r.stdout).toMatch(/ok\n$/);
+  });
+
+  it('reports rules that match nothing, missing include paths and unknown adapters', async () => {
+    writeFileSync(
+      join(checkout, '.factory/factory.yaml'),
+      FACTORY_YAML.replace('sandbox: process', 'sandbox: podman') + 'context: { include: [src/, nope/], rules: [.factory/rules/*.txt] }\n',
+    );
+    const r = await factory(['validate', join(checkout, 'src')], root);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('unknown sandbox adapter "podman"');
+    expect(r.stderr).toContain('context.rules: .factory/rules/*.txt matches no files');
+    expect(r.stderr).toContain('context.include: nope/ does not exist');
+    expect(r.stderr).not.toContain('src/');
+  });
+
+  it('names a planned adapter without failing', async () => {
+    writeFileSync(join(checkout, '.factory/factory.yaml'), FACTORY_YAML.replace('ci: none', 'ci: github-actions'));
+    const r = await factory(['validate']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('"github-actions" is not built yet');
+  });
+
+  it('shows config errors with line numbers', async () => {
+    writeFileSync(join(checkout, '.factory/factory.yaml'), FACTORY_YAML + 'concurrency: 0\n');
+    const r = await factory(['validate']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain(".factory/factory.yaml:5:14  concurrency must be at least 1 (got 0)");
+  });
+});
+
 describe('factory status', () => {
   it('says when there is nothing yet, and refuses unknown ids', async () => {
     mkdirSync(home, { recursive: true });

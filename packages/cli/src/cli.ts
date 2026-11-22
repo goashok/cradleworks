@@ -1,13 +1,14 @@
 // `factory` command. `run` takes everything it touches as arguments so tests can drive it.
 
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, globSync, readFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { ConfigError, loadProjectConfig } from '@cradleworks/config';
 import { Orchestrator, WorkItemRepository, type Project, type WorkItem } from '@cradleworks/core';
 import type { AgentRuntime } from '@cradleworks/interfaces';
+import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
@@ -28,6 +29,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await submit(rest, io);
       case 'status':
         return await status(rest, io);
+      case 'validate':
+        return await validateProject(rest, io);
       case undefined:
       case 'help':
       case '--help':
@@ -54,12 +57,78 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
 const USAGE = `Usage:
   factory submit <task.md> [--base <branch>]   Build a hand-written task and open a pull request
   factory status [<work-item-id>]              List work items, or show one in detail
+  factory validate [<dir>]                     Check a project's .factory/ setup without running anything
 
 Run inside a repository that has a .factory/ folder. Factory state lives in
 $CRADLEWORKS_HOME (default ~/.cradleworks).
 `;
 
 class UsageError extends Error {}
+
+// --- validate -----------------------------------------------------------------
+
+/** Checks what `submit` would need, without touching git, the network or the state store. */
+async function validateProject(args: string[], io: CliEnv): Promise<number> {
+  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  if (positionals.length > 1) throw new UsageError('validate takes at most one folder: factory validate [<dir>]');
+  const start = resolve(io.cwd, positionals[0] ?? '.');
+  const repoRoot = findProjectRoot(start);
+  if (!repoRoot) throw new UsageError(`no .factory/factory.yaml in ${start} or any folder above it`);
+  const config = loadProjectConfig(repoRoot); // throws ConfigError with line numbers
+
+  const registry = io.registry ?? defaultRegistry();
+  const problems: string[] = [];
+  const notes: string[] = [];
+  const adapter = (kind: string, id: string, known: string[] | undefined) => {
+    if (known === undefined || known.includes(id)) return;
+    const planned = PLANNED_ADAPTERS[id];
+    if (planned) notes.push(`${kind} adapter "${id}" is not built yet (arrives in ${planned}); submit does not need it`);
+    else problems.push(`unknown ${kind} adapter "${id}" (known: ${known.join(', ')})`);
+  };
+  adapter('scm', config.adapters.scm, Object.keys(registry.sourceControl));
+  adapter('sandbox', config.adapters.sandbox, Object.keys(registry.sandbox));
+  adapter('runtime', config.adapters.runtime, Object.keys(registry.runtime));
+  adapter('ci', config.adapters.ci, undefined);
+  adapter('tracker', config.adapters.tracker, undefined);
+  for (const id of [config.adapters.ci, config.adapters.tracker]) {
+    if (PLANNED_ADAPTERS[id]) notes.push(`adapter "${id}" is not built yet (arrives in ${PLANNED_ADAPTERS[id]}); submit does not need it`);
+  }
+
+  for (const pattern of config.context.rules) {
+    if (globSync(pattern, { cwd: repoRoot }).length === 0) problems.push(`context.rules: ${pattern} matches no files`);
+  }
+  for (const path of config.context.include) {
+    const found = /[*?[{]/.test(path) ? globSync(path, { cwd: repoRoot }).length > 0 : existsSync(join(repoRoot, path));
+    if (!found) problems.push(`context.include: ${path} does not exist`);
+  }
+
+  if (config.adapters.sandbox === 'local-docker') {
+    const found = await imageExists(config.stack.image);
+    if (found === false) notes.push(`stack.image ${config.stack.image} is not built on this machine yet`);
+    if (found === undefined) notes.push('could not ask Docker whether stack.image exists');
+  }
+
+  const rules = config.context.rules.flatMap((p) => globSync(p, { cwd: repoRoot })).length;
+  io.stdout(`${relativeOrSelf(io.cwd, repoRoot)}: project ${config.project}, ${rules} rule file(s), image ${config.stack.image}\n`);
+  for (const note of notes) io.stdout(`  note: ${note}\n`);
+  for (const problem of problems) io.stderr(`  problem: ${problem}\n`);
+  io.stdout(problems.length === 0 ? 'ok\n' : '');
+  return problems.length === 0 ? 0 : 2;
+}
+
+async function imageExists(image: string): Promise<boolean | undefined> {
+  try {
+    await promisify(execFile)(findDocker(), ['image', 'inspect', '--format', '{{.Id}}', image], { timeout: 15_000 });
+    return true;
+  } catch (error) {
+    const stderr = String((error as { stderr?: string }).stderr ?? '');
+    return /No such image|not found/i.test(stderr) ? false : undefined;
+  }
+}
+
+function relativeOrSelf(from: string, to: string): string {
+  return to === from ? '.' : to;
+}
 
 // --- submit -------------------------------------------------------------------
 

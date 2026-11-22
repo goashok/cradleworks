@@ -43,6 +43,7 @@ pnpm check   # core rule, typecheck, tests
 factory submit task.md        # task.md starts with "# Title"; builds it and opens a PR
 factory status                # list work items
 factory status <work-item-id> # tasks, PRs, runs and gate decisions
+factory validate [<dir>]      # check a project's .factory/ setup without running anything
 ```
 
 Until the package is installed globally, run it as `packages/cli/src/main.ts`. State lives in `~/.cradleworks` (override with `CRADLEWORKS_HOME`).
