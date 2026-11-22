@@ -7,14 +7,31 @@
 // private, loopback or link-local addresses are refused unless that exact address is
 // listed, so an allowed name cannot be pointed at the host or the local network.
 // Every decision is one JSON line on stdout.
+//
+// It also runs credential gateways on GATEWAY_PORT, reachable only from the sandbox's
+// internal network: a plain-HTTP request to /<id>/<path> is forwarded over HTTPS to that
+// gateway's host with its credential header set. The credentials are in GATEWAY_FILE,
+// which only this container mounts; the sandbox holds a placeholder at most. Gateway
+// requests are logged like any other decision, without headers.
 
 import { lookup } from 'node:dns/promises';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
 
 const PORT = Number(process.env.PROXY_PORT ?? 3128);
 const POLICY_FILE = process.env.POLICY_FILE ?? '/policy/allow.json';
+const GATEWAY_PORT = Number(process.env.GATEWAY_PORT ?? 3129);
+const GATEWAY_FILE = process.env.GATEWAY_FILE ?? '/policy/gateways.json';
+
+function gateways() {
+  try {
+    return JSON.parse(readFileSync(GATEWAY_FILE, 'utf8')).gateways ?? {};
+  } catch {
+    return {};
+  }
+}
 
 function rules() {
   try {
@@ -118,6 +135,33 @@ server.on('connect', async (req, client, head) => {
   upstream.on('error', () => client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'));
 });
 
+const HOP_BY_HOP = ['connection', 'keep-alive', 'proxy-connection', 'proxy-authorization', 'transfer-encoding', 'upgrade', 'te', 'trailer'];
+
+export const gateway = http.createServer((req, res) => {
+  const [, id = '', ...rest] = (req.url ?? '/').split('/');
+  const g = gateways()[id];
+  const path = `/${rest.join('/')}`;
+  if (!g) {
+    log({ method: 'GATEWAY', host: id, port: GATEWAY_PORT, decision: 'deny', reason: 'no such gateway' });
+    res.writeHead(404, { 'content-type': 'text/plain' }).end('cradleworks gateway: no such gateway\n');
+    return;
+  }
+  log({ method: 'GATEWAY', host: g.host, port: 443, decision: 'allow', path: path.split('?')[0] });
+  const headers = { ...req.headers, host: g.host };
+  for (const h of [...HOP_BY_HOP, ...(g.strip ?? []), g.header]) delete headers[h.toLowerCase()];
+  headers[g.header.toLowerCase()] = g.value;
+  const upstream = https.request({ host: g.host, port: 443, method: req.method, path, headers, servername: g.host }, (up) => {
+    res.writeHead(up.statusCode ?? 502, up.headers);
+    up.pipe(res);
+  });
+  upstream.on('error', (e) => {
+    if (!res.headersSent) res.writeHead(502).end(`cradleworks gateway: ${e.message}\n`);
+    else res.destroy();
+  });
+  req.pipe(upstream);
+});
+
 if (process.env.PROXY_NO_LISTEN !== '1') {
   server.listen(PORT, '0.0.0.0', () => log({ ready: true, port: PORT }));
+  gateway.listen(GATEWAY_PORT, '0.0.0.0');
 }

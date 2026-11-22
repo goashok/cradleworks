@@ -4,14 +4,16 @@
 // API key and/or subscription token.
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DockerSandbox, findDocker } from '@cradleworks/adapter-local';
 import { describeAgentRuntimeContract } from '@cradleworks/contracts';
 import { createBareRepo, LocalGitSourceControl, localRepoRef } from '@cradleworks/contracts/fakes';
 import type { SandboxHandle } from '@cradleworks/interfaces';
-import { describe, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { secretOf } from './auth.ts';
+import { PLACEHOLDER } from './claude-code-runtime.ts';
 import { ClaudeCodeRuntime, findApiKey, findOAuthToken, type ClaudeAuth } from './index.ts';
 
 export const AGENT_IMAGE = 'cradleworks/agent-claude-code:2.1.319-test';
@@ -80,4 +82,42 @@ for (const [label, auth] of credentials) {
     },
     { timeoutMs: 600_000 },
   );
+
+  describe(`credential gateway: claude code, ${label}`, () => {
+    it('keeps the credential out of the sandbox and reaches the model through the gateway', { timeout: 600_000 }, async () => {
+      ensureImage();
+      const root = mkdtempSync(join(tmpdir(), 'cw-claude-gw-'));
+      const sandbox = new DockerSandbox({ rootDir: join(root, 'sandboxes'), docker });
+      try {
+        await createBareRepo(join(root, 'remote.git'), { 'README.md': '# Fixture\n' });
+        const source = await new LocalGitSourceControl().clone(localRepoRef(join(root, 'remote.git')), join(root, 'source'));
+        const runtime = new ClaudeCodeRuntime({ sandbox, auth, defaultMaxSpendUsd: 0.25 });
+        const taskId = `gw-${Date.now().toString(36)}`;
+        const s = await sandbox.create({ taskId, source, baseRef: 'main', branch: `factory/${taskId}`, image: AGENT_IMAGE, network: { mode: 'allowlist', allow: runtime.requiredHosts() } });
+        const run = await runtime.start({
+          runId: `run-${taskId}`,
+          profile: { role: 'implementer', agent: 'claude-code', model: MODEL },
+          sandbox: s,
+          rolePrompt: 'Answer briefly.',
+          input: 'Use the Bash tool to run: env | sort > env.txt   Then reply done.',
+          contextFiles: [],
+          tools: { allow: [], deny: [] },
+          limits: { maxWallSeconds: 300, maxSpendUsd: 0.25 },
+        });
+        let done: { outcome: string } | undefined;
+        for await (const e of run.events) if (e.type === 'done') done = e;
+        expect(done?.outcome).toBe('succeeded');
+        const env = readFileSync(join(s.workspacePath, 'env.txt'), 'utf8');
+        // Claude Code may hide credential variables from its tools; any it shows hold the placeholder.
+        for (const line of env.split('\n').filter((l) => /^(ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN)=/.test(l))) expect(line.endsWith(`=${PLACEHOLDER}`)).toBe(true);
+        expect(env).toMatch(/^ANTHROPIC_BASE_URL=http:\/\/egress-proxy:3129\/g\d+$/m);
+        expect(env).not.toContain(secretOf(auth));
+        const log = await sandbox.egressLog(s);
+        expect(log.some((d) => d.method === 'GATEWAY' && d.decision === 'allow' && d.host === 'api.anthropic.com')).toBe(true);
+        await sandbox.destroy(s);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
 }

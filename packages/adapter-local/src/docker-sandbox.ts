@@ -18,6 +18,7 @@ import {
   AdapterError,
   parseAllowEntry,
   type AllowRule,
+  type CredentialGatewayInput,
   type ExecOptions,
   type ExecResult,
   type NetworkPolicy,
@@ -34,6 +35,8 @@ export const SANDBOX_LABEL = 'dev.cradleworks.sandbox';
 const EXEC_MARKER = 'CRADLEWORKS_EXEC';
 const PROXY_ALIAS = 'egress-proxy';
 const PROXY_PORT = 3128;
+/** The proxy's credential gateway, reachable only from the sandbox's internal network. */
+const GATEWAY_PORT = 3129;
 /** Maven's resolver ignores Java's proxy properties, so it gets a settings file naming the proxy. */
 const MAVEN_SETTINGS = '/etc/cradleworks/maven-settings.xml';
 /** Stock Node image the egress proxy runs in. */
@@ -48,6 +51,8 @@ export interface EgressDecision {
   port: number;
   decision: 'allow' | 'deny';
   reason?: string;
+  /** Gateway requests: the path asked for, without its query. */
+  path?: string;
 }
 
 export interface DockerSandboxOptions {
@@ -69,6 +74,8 @@ interface Entry {
   network: NetworkPolicy;
   /** Present while an allow-list policy is in force. */
   egress?: Egress;
+  /** Credential gateways by id; kept here so a restarted proxy gets them back. */
+  gateways: Record<string, CredentialGatewayInput>;
 }
 
 interface Egress {
@@ -178,6 +185,7 @@ export class DockerSandbox implements Sandbox {
       sourcePath: spec.source.path,
       env: { ...(spec.env ?? {}) },
       network: spec.network,
+      gateways: {},
       ...(egress ? { egress } : {}),
     });
     return { ...handle };
@@ -292,6 +300,7 @@ export class DockerSandbox implements Sandbox {
         throw error;
       }
       entry.egress = egress;
+      if (Object.keys(entry.gateways).length) writeGateways(egress.policyFile, entry.gateways);
     } else if (entry.egress) {
       await this.#switchNetwork(entry.container, entry.egress.network, 'none');
       await this.#stopEgress(entry.egress);
@@ -372,13 +381,16 @@ export class DockerSandbox implements Sandbox {
           '--memory',
           '128m',
           '--user',
-          '1000:1000',
+          // The host user, so the proxy can read the credential file (mode 0600) it mounts.
+          typeof process.getuid === 'function' ? `${process.getuid()}:${process.getgid?.() ?? process.getuid()}` : '1000:1000',
           '--mount',
           `type=bind,source=${PROXY_SCRIPT},target=/proxy/egress-proxy.mjs,readonly`,
           '--mount',
           `type=bind,source=${dirname(egress.policyFile)},target=/policy,readonly`,
           '--env',
           `PROXY_PORT=${PROXY_PORT}`,
+          '--env',
+          `GATEWAY_PORT=${GATEWAY_PORT}`,
           this.#options.proxyImage ?? DEFAULT_PROXY_IMAGE,
           'node',
           '/proxy/egress-proxy.mjs',
@@ -407,6 +419,20 @@ export class DockerSandbox implements Sandbox {
     }
     const logs = await this.#run(['logs', proxy], 'create');
     throw fail('unavailable', 'create', `egress proxy did not start: ${(logs.stderr || logs.stdout).trim().slice(-500)}`);
+  }
+
+  /**
+   * A gateway on the sandbox's own egress proxy: the sandbox sends plain HTTP to it, and
+   * the proxy forwards over HTTPS with the credential set. The credential is written to a
+   * file only the proxy mounts, and is never in the sandbox's environment or filesystem.
+   */
+  async credentialGateway(sandbox: SandboxHandle, input: CredentialGatewayInput): Promise<string | undefined> {
+    const entry = this.#entry(sandbox, 'credentialGateway');
+    if (!entry.egress) return undefined; // no proxy (network "none"): nothing could reach it
+    const id = `g${Object.keys(entry.gateways).length + 1}`;
+    entry.gateways[id] = input;
+    writeGateways(entry.egress.policyFile, entry.gateways);
+    return `http://${PROXY_ALIAS}:${GATEWAY_PORT}/${id}`;
   }
 
   async #stopEgress(egress: Egress): Promise<void> {
@@ -471,6 +497,14 @@ function allowRules(policy: NetworkPolicy, operation: string): AllowRule[] {
 }
 
 /** Written whole and renamed into place, so the proxy never reads half a file. */
+/** Credentials for the gateway, beside the policy, readable by the owner only. */
+function writeGateways(policyFile: string, gateways: Record<string, CredentialGatewayInput>): void {
+  const file = join(dirname(policyFile), 'gateways.json');
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(`${file}.tmp`, JSON.stringify({ gateways }), { mode: 0o600 });
+  renameSync(`${file}.tmp`, file);
+}
+
 function writePolicy(file: string, rules: AllowRule[]): void {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(`${file}.tmp`, JSON.stringify({ rules }), { mode: 0o644 });
@@ -480,7 +514,8 @@ function writePolicy(file: string, rules: AllowRule[]): void {
 /** Proxy settings most tools read: curl, wget, git, npm, pip, and the JVM. */
 function proxyEnv(): Record<string, string> {
   const url = `http://${PROXY_ALIAS}:${PROXY_PORT}`;
-  const noProxy = 'localhost,127.0.0.1,::1';
+  // The proxy's own name is reached directly: that's the credential gateway.
+  const noProxy = `localhost,127.0.0.1,::1,${PROXY_ALIAS}`;
   return {
     HTTP_PROXY: url,
     HTTPS_PROXY: url,
@@ -488,7 +523,7 @@ function proxyEnv(): Record<string, string> {
     https_proxy: url,
     NO_PROXY: noProxy,
     no_proxy: noProxy,
-    JAVA_TOOL_OPTIONS: `-Dhttp.proxyHost=${PROXY_ALIAS} -Dhttp.proxyPort=${PROXY_PORT} -Dhttps.proxyHost=${PROXY_ALIAS} -Dhttps.proxyPort=${PROXY_PORT} -Dhttp.nonProxyHosts=localhost|127.0.0.1`,
+    JAVA_TOOL_OPTIONS: `-Dhttp.proxyHost=${PROXY_ALIAS} -Dhttp.proxyPort=${PROXY_PORT} -Dhttps.proxyHost=${PROXY_ALIAS} -Dhttps.proxyPort=${PROXY_PORT} -Dhttp.nonProxyHosts=localhost|127.0.0.1|${PROXY_ALIAS}`,
     // Maven 3.9+ adds MAVEN_ARGS to every command line. Global settings, so a project's own
     // ~/.m2/settings.xml still applies on top.
     MAVEN_ARGS: `--global-settings ${MAVEN_SETTINGS}`,

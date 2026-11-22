@@ -40,6 +40,16 @@ export interface ExecOptions {
   stdin?: string;
 }
 
+export interface CredentialGatewayInput {
+  /** HTTPS host the gateway forwards to. */
+  host: string;
+  /** Header the gateway sets, replacing whatever the client sent in it. */
+  header: string;
+  value: string;
+  /** Headers the gateway strips from the client's request (e.g. the other auth header). */
+  strip?: string[];
+}
+
 export interface ExecResult {
   exitCode: number;
   stdout: string;
@@ -69,6 +79,13 @@ export interface Sandbox {
   copyIn(sandbox: SandboxHandle, hostPath: string, sandboxPath: string): Promise<void>;
   copyOut(sandbox: SandboxHandle, sandboxPath: string, hostPath: string): Promise<void>;
   setNetworkPolicy(sandbox: SandboxHandle, policy: NetworkPolicy): Promise<void>;
+  /**
+   * Optional. Lets the sandbox reach `host` over HTTPS through a gateway outside it that
+   * sets `header` to `value` on every request, so the credential never enters the sandbox.
+   * Returns the plain-HTTP base URL to use from inside, or undefined when this sandbox
+   * can't (then the caller falls back to giving the sandbox the credential).
+   */
+  credentialGateway?(sandbox: SandboxHandle, input: CredentialGatewayInput): Promise<string | undefined>;
   /** Removes the sandbox and its checkout. Safe to call twice. */
   destroy(sandbox: SandboxHandle): Promise<void>;
 }

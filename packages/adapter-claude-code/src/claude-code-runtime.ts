@@ -2,9 +2,11 @@
 //
 // The sandbox is the security boundary: Claude Code runs with its own permission prompts
 // bypassed (nobody is there to answer them), limited by the factory's tool deny-list, the
-// sandbox's network allow-list, and `--max-budget-usd`. The credential reaches the agent
-// as an environment variable inside the sandbox, so every event is scrubbed of it before
-// it leaves this adapter.
+// sandbox's network allow-list, and `--max-budget-usd`. Where the sandbox offers a
+// credential gateway (the Docker sandbox does), the credential stays outside: the agent
+// gets a placeholder and the gateway's URL, and the sandbox's proxy sets the real header.
+// Otherwise it reaches the agent as an environment variable. Either way every event is
+// scrubbed of it before it leaves this adapter.
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -26,6 +28,8 @@ import { StreamMapper, type Draft } from './stream-mapper.ts';
 const ADAPTER = 'cli-agent';
 export const CLAUDE_CODE_AGENT = 'claude-code';
 export const MODEL_API_HOST = 'api.anthropic.com';
+/** What the agent holds instead of the credential when the sandbox's gateway sets it. */
+export const PLACEHOLDER = 'cradleworks-credential-held-outside-the-sandbox';
 
 export interface ClaudeCodeRuntimeOptions {
   /** The sandbox adapter the factory created this run's sandbox with. */
@@ -63,8 +67,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.#runs.add(request.runId);
 
     const secret = secretOf(this.#options.auth);
+    const gateway = await this.#gateway(request);
     const proc = await this.#options.sandbox.spawn(request.sandbox, this.#argv(request), {
-      env: { ...request.env, ...this.#env() },
+      env: { ...request.env, ...this.#env(gateway) },
       stdin: request.input,
     });
     return new ClaudeCodeRun(request, proc, secret, this.#options.clock ?? (() => new Date().toISOString()));
@@ -98,10 +103,32 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     ];
   }
 
-  #env(): Record<string, string> {
+  /**
+   * Where the sandbox supports it, the credential stays outside: the sandbox's proxy sets it
+   * on requests to the model API, and the agent gets a placeholder and the gateway's URL.
+   */
+  async #gateway(request: AgentRunRequest): Promise<string | undefined> {
+    const sandbox = this.#options.sandbox;
+    if (!sandbox.credentialGateway) return undefined;
     const auth = this.#options.auth;
+    return sandbox.credentialGateway(
+      request.sandbox,
+      auth.kind === 'api_key'
+        ? { host: MODEL_API_HOST, header: 'x-api-key', value: auth.apiKey, strip: ['authorization'] }
+        : { host: MODEL_API_HOST, header: 'authorization', value: `Bearer ${auth.token}`, strip: ['x-api-key'] },
+    );
+  }
+
+  #env(gateway?: string): Record<string, string> {
+    const auth = this.#options.auth;
+    const credential =
+      gateway === undefined
+        ? auth.kind === 'api_key'
+          ? { ANTHROPIC_API_KEY: auth.apiKey }
+          : { CLAUDE_CODE_OAUTH_TOKEN: auth.token }
+        : { ANTHROPIC_BASE_URL: gateway, ...(auth.kind === 'api_key' ? { ANTHROPIC_API_KEY: PLACEHOLDER } : { CLAUDE_CODE_OAUTH_TOKEN: PLACEHOLDER }) };
     return {
-      ...(auth.kind === 'api_key' ? { ANTHROPIC_API_KEY: auth.apiKey } : { CLAUDE_CODE_OAUTH_TOKEN: auth.token }),
+      ...credential,
       // Only the model API is reachable anyway; these stop it trying anything else.
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
       DISABLE_AUTOUPDATER: '1',
