@@ -133,6 +133,7 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       const task = findTask(wi, event.taskId, fail);
       expectTaskState(task, ['building'], fail);
       task.state = 'verifying';
+      if (event.protectedPaths?.length) task.protectedPaths = [...new Set([...(task.protectedPaths ?? []), ...event.protectedPaths])].sort();
       break;
     }
 

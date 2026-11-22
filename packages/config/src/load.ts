@@ -166,7 +166,8 @@ interface RawConfig {
   concurrency: number;
   verify: { tester: boolean };
   related_repos: string | string[];
-  sandbox: { network: { mode: 'none' | 'allowlist'; allow: string | string[] } };
+  protected_paths: string | string[];
+  sandbox: { network: { mode: 'none' | 'allowlist'; allow: string | string[] }; commands: { deny: string | string[] } };
 }
 
 const list = (v: string | string[]): string[] => (typeof v === 'string' ? [v] : [...v]);
@@ -198,6 +199,8 @@ function toProjectConfig(raw: RawConfig): ProjectConfig {
     concurrency: raw.concurrency,
     verify: { tester: raw.verify.tester },
     relatedRepos: list(raw.related_repos),
+    protectedPaths: list(raw.protected_paths),
+    commands: { deny: list(raw.sandbox.commands.deny) },
     network: { mode: raw.sandbox.network.mode, allow: list(raw.sandbox.network.allow) },
   };
 }

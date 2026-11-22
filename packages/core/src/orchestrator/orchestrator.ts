@@ -3,7 +3,7 @@
 // until the change passes or needs a human, and applies the change gate.
 // Every decision lands in the work item's stream; every step lands in the run's stream.
 
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   AdapterError,
@@ -63,6 +63,7 @@ import {
   type PlanDraftTask,
 } from './issue-flow.ts';
 import { RunLog } from './run-log.ts';
+import { assertFactoryBranch, assertMergeTarget, describeSecrets, protectedPathsIn, scanDiffForSecrets, type SecretPattern } from './hard-rules.ts';
 import { checkBudget, extendUserBudget, isBudgetStop, userSpend, type BudgetPeriod, type UserSpend } from './budget.ts';
 import { EventSpecStore } from './spec-store.ts';
 import { combine, evidenceMarkdown, parseReview, reworkFeedback, runChecks, waitForCi, type CiWaitOptions } from './verify.ts';
@@ -75,6 +76,11 @@ export interface OrchestratorDeps {
   runtime: AgentRuntime;
   /** CI for the Verify station; absent = the project has none. */
   ci?: CI;
+  /**
+   * More hard rules than the core's neutral ones: CI config files that are protected, and
+   * known token formats for the secret scan. Projects can add to these, never remove them.
+   */
+  hardRules?: { protectedPaths?: readonly string[]; secretPatterns?: readonly SecretPattern[] };
   /** Where requests come from and where the factory reports back; absent = CLI only. */
   tracker?: Tracker;
   /** Default: specs in the factory's event log. */
@@ -230,7 +236,7 @@ export class Orchestrator {
         }
         case 'ready': {
           if (!task.changeApproved) {
-            const mode = project.config.gates.changeApproval;
+            const mode = gateMode(project, task);
             if (mode === 'human') {
               onProgress({ kind: 'gate', verdict: 'waiting', mode });
               return outcomeOf(task, true);
@@ -244,7 +250,7 @@ export class Orchestrator {
             onProgress({ kind: 'gate', verdict: 'approved', mode });
             continue;
           }
-          if (!project.config.gates.autoMerge) return outcomeOf(task, false);
+          if (!autoMerges(project, task)) return outcomeOf(task, false);
           const sha = await this.mergeTask(project, workItemId, taskId);
           onProgress({ kind: 'merged', sha });
           continue;
@@ -295,6 +301,7 @@ export class Orchestrator {
       const baseRef = onBranch ? `origin/${branch}` : base;
       sandbox = await this.#deps.sandbox.create({ taskId: shortId(taskId), source: checkout, baseRef, branch, image: project.config.stack.image, network });
       await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch, baseRef, network });
+      const startSha = (await this.#deps.sandbox.exec(sandbox, ['git', 'rev-parse', 'HEAD'])).stdout.trim();
 
       step = 'context';
       const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
@@ -302,11 +309,13 @@ export class Orchestrator {
       const contextFiles = pack.files.map((f) => f.path);
 
       const spec = await this.#specFor(task);
+      let specWritten: { path: string; content: string } | undefined;
       if (spec && !rework && project.config.specs === 'repo' && !task.repo && wi.tasks[0]?.id === task.id) {
         step = 'spec';
         const file = `.factory/specs/${specFileName(wi, spec)}`;
         mkdirSync(join(sandbox.workspacePath, '.factory', 'specs'), { recursive: true });
-        writeFileSync(join(sandbox.workspacePath, file), specFile(spec, wi.source));
+        specWritten = { path: file, content: specFile(spec, wi.source) };
+        writeFileSync(join(sandbox.workspacePath, file), specWritten.content);
         await log.write({ type: 'spec_written', path: file });
       }
 
@@ -370,7 +379,31 @@ export class Orchestrator {
       }
       await log.write({ type: 'changes_committed', sha });
 
+      // Hard rules: nothing that looks like a secret leaves the sandbox, and changes to CI or
+      // factory config are flagged for a person. Only what this run added is scanned.
+      step = 'scan';
+      const range = `${startSha}..${sha}`;
+      const added = await this.#deps.sandbox.exec(sandbox, ['git', 'diff', '-U0', '--no-color', '--no-ext-diff', range]);
+      if (added.exitCode !== 0) throw new Error(`could not read the change to scan it: ${added.stderr.trim().slice(0, 300)}`);
+      const secrets = scanDiffForSecrets(added.stdout, this.#deps.hardRules?.secretPatterns);
+      if (secrets.length) {
+        const reason = `secret scan: ${describeSecrets(secrets)}`;
+        await log.write({ type: 'secrets_found', findings: secrets });
+        await log.write({ type: 'task_declined', reason });
+        await this.#emit(wi.id, [
+          { type: 'task_declined', at: this.#clock(), taskId, reason },
+          { type: 'run_ended', at: this.#clock(), runId, outcome: 'failed' },
+        ]);
+        return { outcome: 'declined', reason, runId };
+      }
+      const names = await this.#deps.sandbox.exec(sandbox, ['git', 'diff', '--name-only', '--no-renames', range]);
+      // The approved spec the factory itself wrote isn't a protected change, unless the agent edited it.
+      const ownSpec = (path: string) => path === specWritten?.path && readIfPresent(join(sandbox!.workspacePath, path)) === specWritten.content;
+      const touched = protectedPathsIn(names.stdout.split('\n').filter((p) => p && !ownSpec(p)), [...(this.#deps.hardRules?.protectedPaths ?? []), ...(project.config.protectedPaths ?? [])]);
+      if (touched.length) await log.write({ type: 'protected_paths_changed', paths: touched });
+
       step = 'push';
+      assertFactoryBranch(branch);
       // A rebuild after an interrupted run, with no PR yet, replaces whatever that run pushed.
       await this.#deps.sourceControl.push(copy, branch, { replace: rework && !task.pr });
       await log.write({ type: 'branch_pushed', branch });
@@ -393,9 +426,14 @@ export class Orchestrator {
 
       await this.#emit(wi.id, [
         ...events,
-        { type: 'task_built', at: this.#clock(), taskId },
+        { type: 'task_built', at: this.#clock(), taskId, ...(touched.length ? { protectedPaths: touched } : {}) },
         { type: 'run_ended', at: this.#clock(), runId, outcome: 'succeeded' },
       ]);
+      if (touched.length && !task.protectedPaths?.length) {
+        await this.#deps.sourceControl
+          .comment(pr, `This change touches protected files (${touched.join(', ')}). The factory won't approve or merge it on its own: a person has to.`)
+          .catch(() => undefined);
+      }
       return { outcome: 'pr_opened', pr, runId, branch, reworked: onBranch };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1172,7 +1210,7 @@ export class Orchestrator {
     if (!task.changeApproved) {
       await this.#decideChange(wi, task, { mode: 'human', verdict: 'approved', decidedBy: input.by, reason: input.reason?.trim() || 'approved from the CLI' });
     }
-    if (input.merge || project.config.gates.autoMerge) return { merged: await this.mergeTask(project, workItemId, taskId) };
+    if (input.merge || autoMerges(project, task)) return { merged: await this.mergeTask(project, workItemId, taskId) };
     return {};
   }
 
@@ -1214,6 +1252,7 @@ export class Orchestrator {
       sha = status.headSha;
     } else {
       if (status.state !== 'open') throw new Error(`pull request ${pr.url} is closed`);
+      assertMergeTarget(status.baseBranch, baseFor(project, wi, task));
       if (status.headSha !== verified) {
         throw new Error(`the pull request head moved since it was verified (verified ${verified.slice(0, 12)}, now ${status.headSha.slice(0, 12)}); not merging`);
       }
@@ -1263,11 +1302,11 @@ export class Orchestrator {
       if (!current.changeApproved) {
         if (status.state === 'merged') {
           await this.#decideChange(await this.#mustLoad(workItemId), current, { mode: 'human', verdict: 'approved', decidedBy: approval?.author.handle ?? 'pull request', reason: 'merged on the pull request' });
-        } else if (changes && project.config.gates.changeApproval === 'human') {
+        } else if (changes && gateMode(project, task) === 'human') {
           await this.#decideChange(await this.#mustLoad(workItemId), current, { mode: 'human', verdict: 'rejected', decidedBy: changes.author.handle ?? changes.author.name, reason: changes.body.trim() || 'changes requested on the pull request' });
           notes.push(`${task.id}: changes requested by ${changes.author.handle ?? changes.author.name}; back to rework`);
           continue;
-        } else if (approval && project.config.gates.changeApproval === 'human') {
+        } else if (approval && gateMode(project, task) === 'human') {
           await this.#decideChange(await this.#mustLoad(workItemId), current, { mode: 'human', verdict: 'approved', decidedBy: approval.author.handle ?? approval.author.name, reason: 'approving review on the pull request' });
           notes.push(`${task.id}: approved by ${approval.author.handle ?? approval.author.name}`);
         } else {
@@ -1277,7 +1316,7 @@ export class Orchestrator {
       if (status.state === 'merged') {
         await this.#emit(workItemId, [{ type: 'task_merged', at: this.#clock(), taskId: task.id, sha: status.headSha }]);
         notes.push(`${task.id}: merged on the pull request`);
-      } else if (project.config.gates.autoMerge) {
+      } else if (autoMerges(project, task)) {
         const sha = await this.mergeTask(project, workItemId, task.id);
         notes.push(`${task.id}: merged ${sha.slice(0, 12)}`);
       }
@@ -1382,6 +1421,24 @@ export class Orchestrator {
     if (!wi) throw new Error(`no work item ${workItemId}`);
     return wi;
   }
+}
+
+function readIfPresent(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+/** The change gate for a task: a person, whatever factory.yaml says, when it touches protected files. */
+function gateMode(project: Project, task: Task): GateMode {
+  return task.protectedPaths?.length ? 'human' : project.config.gates.changeApproval;
+}
+
+/** Whether an approved task merges without being asked: never when it touches protected files. */
+function autoMerges(project: Project, task: Task): boolean {
+  return project.config.gates.autoMerge && !task.protectedPaths?.length;
 }
 
 function outcomeOf(task: Task, awaitingApproval: boolean): TaskOutcome {
@@ -1510,7 +1567,7 @@ function canMove(wi: WorkItem, task: Task, project: Project): boolean {
     case 'verifying':
       return true;
     case 'ready':
-      return task.changeApproved ? project.config.gates.autoMerge : project.config.gates.changeApproval !== 'human';
+      return task.changeApproved ? autoMerges(project, task) : gateMode(project, task) !== 'human';
     default:
       return false;
   }

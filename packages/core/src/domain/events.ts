@@ -48,7 +48,8 @@ export type WorkItemEvent =
   | (Base & { type: 'tasks_planned'; tasks: PlannedTask[] })
   | (Base & { type: 'task_started'; taskId: string; branch: string })
   | (Base & { type: 'task_pr_opened'; taskId: string; pr: ExternalRef })
-  | (Base & { type: 'task_built'; taskId: string })
+  /** `protectedPaths`: files the change touches that only a person may approve and merge. */
+  | (Base & { type: 'task_built'; taskId: string; protectedPaths?: string[] })
   | (Base & { type: 'task_evidence_recorded'; taskId: string; evidence: Evidence })
   | (Base & { type: 'task_verified'; taskId: string; verdict: 'pass' | 'rework' | 'escalate'; reason: string })
   /** The implementer finished without changing anything and said why; a human decides. */

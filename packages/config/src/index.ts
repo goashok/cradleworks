@@ -8,3 +8,4 @@ export {
   type ConfigIssue,
   type SourceText,
 } from './load.ts';
+export { DENIED_COMMANDS, KNOWN_CI_PATHS, KNOWN_SECRET_PATTERNS } from './hard-rules.ts';

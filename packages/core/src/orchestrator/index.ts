@@ -18,3 +18,4 @@ export { RunLog, type RunLogEntry } from './run-log.ts';
 export { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES, type ContextPack } from './context-pack.ts';
 export { implementerPrompt, reviewerPrompt } from './prompts.ts';
 export { checkBudget, extendUserBudget, isBudgetStop, periodKey, userSpend, type BudgetCheck, type BudgetPeriod, type UserSpend } from './budget.ts';
+export { PROTECTED_PATHS, protectedPathsIn, scanDiffForSecrets, describeSecrets, HardRuleError, type SecretFinding, type SecretPattern } from './hard-rules.ts';

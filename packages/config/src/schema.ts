@@ -115,10 +115,16 @@ export const FACTORY_YAML: Field = {
       fields: { tester: { kind: 'boolean', required: true } },
     },
     related_repos: { kind: 'stringList', required: true },
+    protected_paths: { kind: 'stringList', required: true },
     sandbox: {
       kind: 'object',
       required: true,
       fields: {
+        commands: {
+          kind: 'object',
+          required: true,
+          fields: { deny: { kind: 'stringList', required: true } },
+        },
         network: {
           kind: 'object',
           required: true,

@@ -79,6 +79,8 @@ export interface Task {
   changeApproved: boolean;
   /** State to return to when an exceeded budget is extended. */
   resumeState?: 'building' | 'verifying';
+  /** Protected files the change touches: the change gate waits for a person and nothing merges it automatically. */
+  protectedPaths?: string[];
   /** Model spend on this task so far, every attempt and agent together. */
   spentUsd: number;
   /** The task's spend limit, when someone raised it above the project's `per_task_usd`. */

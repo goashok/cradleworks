@@ -66,6 +66,10 @@ export interface ProjectConfig {
   };
   /** Other repositories, by local path from this one, that the planner may give tasks to. */
   relatedRepos: string[];
+  /** Paths, beyond the built-in ones, whose changes need a person and are never auto-merged. */
+  protectedPaths?: string[];
+  /** Commands, beyond the built-in ones, agents may not run in the sandbox. */
+  commands?: { deny: string[] };
   /** Sandbox network egress. */
   network: NetworkPolicy;
 }
