@@ -208,8 +208,8 @@ line in the issue body:
 <!-- cradleworks: base=release/2 -->
 ```
 
-It's an HTML comment, so it doesn't show on GitHub. It applies to tasks in the issue's own
-repository; tasks in related repositories use their default branch.
+It's an HTML comment, so it doesn't show on GitHub. It applies to every repository the work
+touches, so with `related_repos` the branch must exist in each of them.
 
 ## When it stops
 

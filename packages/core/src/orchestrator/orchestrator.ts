@@ -1368,9 +1368,9 @@ export interface WorkItemOutcome {
 /** Tools a read-only agent may not use. */
 const READ_ONLY = ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'];
 
-/** The work item's branch for its own repo; a related repo's task uses that repo's default. */
-function baseFor(project: Project, wi: WorkItem, task: Task): string {
-  return (task.repo ? undefined : wi.baseBranch) ?? project.baseBranch ?? 'main';
+/** The branch the issue named, in every repository the work touches; else the project's default. */
+function baseFor(project: Project, wi: WorkItem, _task: Task): string {
+  return wi.baseBranch ?? project.baseBranch ?? 'main';
 }
 
 function fromTracker(wi: WorkItem): boolean {
