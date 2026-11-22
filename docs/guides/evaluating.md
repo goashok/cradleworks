@@ -83,10 +83,28 @@ What we took from it:
 - **Graders hit flaky tests too.** The planted flaky test failed twice while grading correct
   code, so the grader now retries non-hidden failures once and reports them.
 
+## From issues: the M3 exit check (2026-11-22)
+
+The same tasks can be run the way a team would use the factory: each task's issue text is filed
+as a GitHub issue, and `factory watch` takes it through spec, plan, build, verify and merge. All
+gates were `ai`, with auto-merge into a throwaway branch at the task's base commit. The grader
+then grades that branch after the merges.
+
+| Task | What it needed | Result |
+| --- | --- | --- |
+| orders-011 (medium) | one test change in one repo | 1 task, 1 PR merged, **pass** (4 hidden tests) |
+| notifications-006 (large) | a service endpoint and a client release, in two repos | spec rewritten once by the spec check, 2 tasks, 2 PRs merged, **pass** (22 hidden tests) |
+
+The tester's acceptance check ran and passed on every task. The first notifications-006 attempt
+failed, and the failure was useful. The spec agent wasn't told about the related client repo,
+so it narrowed the spec to the service. It is told now. That's the kind of gap only a real run
+finds.
+
 ## Running it
 
 The eval tooling lives in the private eval repository: the grader, a script that submits each
-task's issue text and grades the branch, and dated result files. The plan for M5 is to run the
+task's issue text and grades the branch, one that files tasks as issues for `factory watch`, and
+dated result files. The plan for M5 is to run the
 suite on every core change and block changes that lower the pass rate.
 
 If you build your own suite for your own projects, the shape above carries over: issue text the

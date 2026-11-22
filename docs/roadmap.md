@@ -1,13 +1,13 @@
 # Roadmap
 
-Each milestone ends with something that runs. M0 to M3 are built.
+Each milestone ends with something that runs. M0 to M3 are done.
 
 | | Milestone | Delivers | Exit check | Status |
 | --- | --- | --- | --- | --- |
 | M0 | Reference projects and eval suite | Two reference projects with planted difficulties; 30 tasks with hidden tests, reference solutions and a grader | Every task proven solvable; reviewed by someone outside the design team | ✅ Built and verified; outside review pending |
 | M1 | Walking skeleton | State machine, event log, SQLite store, config, contract suites, GitHub adapter, Docker sandbox, Claude Code runtime, Build station, CLI | `factory submit` opens a PR on a reference project, logged and replayable | ✅ Done |
 | M2 | Verify and gates | Verify station (build, tests, CI, reviewer agent), evidence bundle on the PR, the change gate, the rework loop | A task loops through rework and reaches the change gate with evidence | ✅ Done |
-| M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | ✅ Built; exit check on the reference projects pending |
+| M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | ✅ Done |
 | M4 | Budgets and security | Per-user caps, a hard-deny list, scoped tokens, an evaluation of microVM sandboxes | Budget-stop and deny-list tests pass | Next |
 | M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | |
 | M6 | Portability and console | A second agent runtime (OpenAI Codex CLI), a non-GitHub adapter, a local web console | The pass rate holds with no core change | |
