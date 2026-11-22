@@ -299,6 +299,20 @@ describe('issue flow', () => {
   });
 });
 
+describe('usage limits', () => {
+  it('escalates a task whose agent hit a usage limit, and builds it on retry', async () => {
+    const o = orchestrator({
+      implementer: (_r, n) => (n === 1 ? [{ kind: 'fail', error: "You've hit your 5-hour limit · resets 7pm (UTC)" }] : [{ kind: 'message', text: 'Done.' }, write('export.txt')]),
+    });
+    const { workItemId, taskId } = await o.submitTask({ project, title: 'Write export', body: 'Add export.txt.', requester: 'alex' });
+    const first = await o.runTask(project, workItemId, taskId);
+    expect(first.state).toBe('escalated');
+    expect(first.reason).toMatch(/^paused: the agent hit a usage or credit limit/);
+    await o.retryTask(workItemId, taskId, { by: 'alex' });
+    expect((await o.runTask(project, workItemId, taskId)).state).toBe('merged');
+  });
+});
+
 describe('issue flow parsing', () => {
   it('reads specs and questions, and refuses a second round of questions', () => {
     expect(parseSpecAnswer('```json\n{"questions":["a","b","c","d","e","f"]}\n```', true)).toEqual({ kind: 'questions', questions: ['a', 'b', 'c', 'd', 'e'] });

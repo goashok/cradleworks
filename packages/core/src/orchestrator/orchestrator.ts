@@ -324,6 +324,16 @@ export class Orchestrator {
       });
       const outcome: AgentOutcome = done?.outcome ?? 'failed';
       if (outcome !== 'succeeded') {
+        // A spend or usage limit isn't the task's fault: escalate it, so it can be retried once the limit resets.
+        if (done?.error && USAGE_LIMIT.test(done.error)) {
+          const reason = `paused: the agent hit a usage or credit limit (${done.error.trim()}). Retry once it resets.`;
+          await log.write({ type: 'step_failed', step: 'agent', error: done.error });
+          await this.#emit(wi.id, [
+            { type: 'task_declined', at: this.#clock(), taskId, reason },
+            { type: 'run_ended', at: this.#clock(), runId, outcome: 'stopped' },
+          ]);
+          return { outcome: 'declined', reason, runId };
+        }
         return await this.#fail(wi, log, runId, taskId, 'agent', `agent run ${outcome}${done?.error ? `: ${done.error}` : ''}`, outcome);
       }
 
@@ -1366,6 +1376,9 @@ export interface WorkItemOutcome {
   /** What the work item waits on, when it hasn't ended. */
   waitingFor?: string;
 }
+
+/** Errors that mean the account ran out, not that the task went wrong. */
+const USAGE_LIMIT = /hit your .*limit|usage limit|credit balance is too low|rate.?limit|quota/i;
 
 /** Tools a read-only agent may not use. */
 const READ_ONLY = ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'];
