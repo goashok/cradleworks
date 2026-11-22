@@ -7,6 +7,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   AdapterError,
+  ZERO_USAGE,
   type AgentEvent,
   type AgentOutcome,
   type AgentProfile,
@@ -62,6 +63,7 @@ import {
   type PlanDraftTask,
 } from './issue-flow.ts';
 import { RunLog } from './run-log.ts';
+import { checkBudget, extendUserBudget, isBudgetStop, userSpend, type BudgetPeriod, type UserSpend } from './budget.ts';
 import { EventSpecStore } from './spec-store.ts';
 import { combine, evidenceMarkdown, parseReview, reworkFeedback, runChecks, waitForCi, type CiWaitOptions } from './verify.ts';
 import { WorkItemRepository } from './work-item-repository.ts';
@@ -115,7 +117,9 @@ export interface SubmitTaskInput {
 export type BuildOutcome =
   | { outcome: 'pr_opened'; pr: PullRequestRef; runId: string; branch: string; reworked: boolean }
   | { outcome: 'declined'; reason: string; runId: string }
-  | { outcome: 'failed'; reason: string; runId: string };
+  | { outcome: 'failed'; reason: string; runId: string }
+  /** Stopped by a spend cap; `factory budget extend` lets it build again. */
+  | { outcome: 'paused'; reason: string; runId: string };
 
 export type VerifyOutcome = { verdict: VerifyVerdict; reason: string; runId: string; evidence?: Evidence };
 
@@ -321,8 +325,18 @@ export class Orchestrator {
         contextFiles,
         tools: { allow: [], deny: [] },
         limits,
-      });
+      }, { project, workItemId, taskId });
       const outcome: AgentOutcome = done?.outcome ?? 'failed';
+      const buildStop = done?.error;
+      if (outcome !== 'succeeded' && buildStop && isBudgetStop(buildStop)) {
+        await log.write({ type: 'step_failed', step: 'agent', error: buildStop });
+        const latest = await this.#mustLoad(workItemId);
+        await this.#emit(workItemId, [
+          { type: 'task_budget_exceeded', at: this.#clock(), taskId, spentUsd: findTask(latest, taskId).spentUsd ?? 0, reason: buildStop },
+          { type: 'run_ended', at: this.#clock(), runId, outcome: 'limit_reached' },
+        ]);
+        return { outcome: 'paused', reason: buildStop, runId };
+      }
       if (outcome !== 'succeeded') {
         // A spend or usage limit isn't the task's fault: escalate it, so it can be retried once the limit resets.
         if (done?.error && USAGE_LIMIT.test(done.error)) {
@@ -478,8 +492,18 @@ export class Orchestrator {
           contextFiles,
           tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
           limits,
-        });
+        }, { project, workItemId, taskId });
         cost += done?.total.costUsd ?? 0;
+        const reviewStop = done?.error;
+        if (reviewStop && isBudgetStop(reviewStop)) {
+          await log.write({ type: 'step_failed', step: 'review', error: reviewStop });
+          const latest = await this.#mustLoad(workItemId);
+          await this.#emit(workItemId, [
+            { type: 'task_budget_exceeded', at: this.#clock(), taskId, spentUsd: findTask(latest, taskId).spentUsd ?? 0, reason: reviewStop },
+            { type: 'run_ended', at: this.#clock(), runId, outcome: 'limit_reached' },
+          ]);
+          return { verdict: 'escalate', reason: reviewStop, runId };
+        }
         review =
           done?.outcome === 'succeeded'
             ? parseReview(done.summary, profile.model)
@@ -758,6 +782,31 @@ export class Orchestrator {
     throw new Error(`work item ${workItemId} is ${wi.state}; no spec or plan is waiting for a decision`);
   }
 
+  /**
+   * Raises a paused task's spend cap by `extraUsd` (0 = resume under the same cap, e.g. after
+   * the requester's own cap was raised). A build builds again; a verify carries on.
+   */
+  async extendTaskBudget(project: Project, workItemId: string, taskId: string, input: { by: string; extraUsd: number }): Promise<number> {
+    const wi = await this.#mustLoad(workItemId);
+    const task = findTask(wi, taskId);
+    if (task.state !== 'budget_exceeded') throw new Error(`task ${taskId} is ${task.state}, not paused for budget`);
+    if (!Number.isFinite(input.extraUsd) || input.extraUsd < 0) throw new Error('the extension must be zero or more');
+    const newLimitUsd = (task.budgetUsd ?? project.config.budgets.perTaskUsd) + input.extraUsd;
+    await this.#emit(workItemId, [{ type: 'task_budget_extended', at: this.#clock(), taskId, extendedBy: input.by, newLimitUsd }]);
+    if (fromTracker(wi)) await this.#say(wi.source, `**${task.title}**: ${input.by} raised its budget to $${newLimitUsd.toFixed(2)}; carrying on.`);
+    return newLimitUsd;
+  }
+
+  /** Raises a requester's daily or monthly cap for the current period. */
+  async extendUserBudget(input: { requester: string; period: BudgetPeriod; extraUsd: number; by: string }): Promise<void> {
+    await extendUserBudget(this.#deps.store, { ...input, at: this.#clock() });
+  }
+
+  /** What a requester has spent today and this month, against the project's caps. */
+  async spendOf(requester: string): Promise<UserSpend> {
+    return userSpend(this.#deps.store, requester, this.#clock());
+  }
+
   /** A person lets a blocked work item continue. */
   async resumeWorkItem(workItemId: string, by: string): Promise<void> {
     const wi = await this.#mustLoad(workItemId);
@@ -803,7 +852,8 @@ export class Orchestrator {
       const doc = (await this.#specs.get(spec.specId, spec.version)) ?? fail('spec not found');
       const item = await this.#tracker().getItem(wi.source);
       const repos = reposSection({ main: project.config.project, related: Object.keys(project.related ?? {}) }).join('\n');
-      const check = await this.#check(project, wi, 'spec', `# Spec check\n\n## The request: ${item.title}\n\n${item.body.trim()}${repos ? `\n${repos}` : ''}\n\n## The spec, version ${doc.version}: ${doc.title}\n\n${specBody(doc)}`);
+      const check = await this.#check(project, wi, 'spec', `# Spec check\n\n## The request: ${item.title}\n\n${item.body.trim()}${repos ? `\n${repos}` : ''}\n\n## The spec, version ${doc.version}: ${doc.title}\n\n${specBody(doc)}`, onProgress);
+      if (!check) return false;
       await this.#decideSpec(wi, { mode, verdict: check.verdict, decidedBy: check.by, reason: check.reasons.join(' ') || 'the spec check passed' }, onProgress);
       await this.#say(wi.source, checkComment('Spec', check));
       return true;
@@ -826,7 +876,8 @@ export class Orchestrator {
       const plan = wi.proposedTasks
         .map((t) => `### ${name.get(t.id)}: ${t.title} (${t.size}${t.dependsOn.length ? `, after ${t.dependsOn.map((d) => name.get(d)).join(', ')}` : ''}${t.repo ? `, in ${t.repo}` : ''})\n\n${t.description ?? ''}`)
         .join('\n\n');
-      const check = await this.#check(project, wi, 'plan', `# Plan check\n\n## The spec: ${doc.title}\n\n${specBody(doc)}\n\n## The plan\n\n${plan}`);
+      const check = await this.#check(project, wi, 'plan', `# Plan check\n\n## The spec: ${doc.title}\n\n${specBody(doc)}\n\n## The plan\n\n${plan}`, onProgress);
+      if (!check) return false;
       await this.#decidePlan(wi, { mode, verdict: check.verdict, decidedBy: check.by, reason: check.reasons.join(' ') || 'the plan check passed' }, onProgress);
       await this.#say(wi.source, checkComment('Plan', check));
       return true;
@@ -929,7 +980,9 @@ export class Orchestrator {
       });
       onProgress({ kind: 'task_stopped', taskId: task.id, title: task.title, outcome });
       if (!fromTracker(wi)) return;
-      if (outcome.state === 'escalated' || outcome.state === 'failed') {
+      if (outcome.state === 'budget_exceeded') {
+        await this.#say(wi.source, `**${task.title}** is paused: ${(outcome.reason ?? 'its budget is used up').replace(/^budget: /, '')}.\n\nRaise the cap with \`factory budget extend ${task.id} --usd <amount>\` (or the requester's with \`factory budget extend --user <name> --usd <amount>\`, then \`factory budget extend ${task.id}\`).`);
+      } else if (outcome.state === 'escalated' || outcome.state === 'failed') {
         await this.#say(wi.source, `**${task.title}** ${outcome.state === 'failed' ? 'failed' : 'needs a person'}: ${outcome.reason ?? 'see the run log'}${outcome.pr ? ` ([pull request](${outcome.pr.url}))` : ''}\n\n${outcome.state === 'escalated' ? `Give it another go with \`factory retry ${task.id} --note "…"\`, or stop with \`factory cancel ${wi.id}\`.` : `Cancel with \`factory cancel ${wi.id}\`, or file the task again.`}`);
       } else if (outcome.awaitingApproval && outcome.pr) {
         await this.#say(wi.source, `**${task.title}** passed verification and is ready for review: ${outcome.pr.url}. Approve it on the pull request (or \`factory approve ${task.id}\`), or request changes to send it back.`);
@@ -983,7 +1036,7 @@ export class Orchestrator {
       step = 'agent';
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-      const done = await this.#runAgent(log, { runId: opts.agentRunId ?? runId, profile, sandbox, rolePrompt: opts.rolePrompt(contextFiles), input: opts.input, contextFiles, tools: { allow: [], deny: READ_ONLY }, limits });
+      const done = await this.#runAgent(log, { runId: opts.agentRunId ?? runId, profile, sandbox, rolePrompt: opts.rolePrompt(contextFiles), input: opts.input, contextFiles, tools: { allow: [], deny: READ_ONLY }, limits }, { project, workItemId: wi.id });
       const cost = done?.total.costUsd ?? 0;
       if (done?.outcome !== 'succeeded') return { ok: false, error: `the ${opts.role} agent run ${done?.outcome ?? 'ended without a result'}${done?.error ? `: ${done.error}` : ''}`, cost };
       return { ok: true, summary: done.summary, cost };
@@ -1001,7 +1054,7 @@ export class Orchestrator {
   }
 
   /** The ai gate for a spec or plan: a checker agent, in its own run. */
-  async #check(project: Project, wi: WorkItem, what: 'spec' | 'plan', input: string): Promise<{ verdict: 'approved' | 'rejected'; reasons: string[]; by: string }> {
+  async #check(project: Project, wi: WorkItem, what: 'spec' | 'plan', input: string, onProgress: (p: WorkProgress) => void): Promise<{ verdict: 'approved' | 'rejected'; reasons: string[]; by: string } | undefined> {
     const runId = this.#id('run');
     const log = new RunLog(this.#deps.store, runId, this.#clock);
     const profile: AgentProfile = { role: 'reviewer', ...resolveAgent(project.config, 'reviewer') };
@@ -1009,6 +1062,13 @@ export class Orchestrator {
     await this.#emit(wi.id, [{ type: 'run_started', at: this.#clock(), runId, subjectId: wi.id, station, agentProfile: profile }]);
     await log.write({ type: 'run_context', workItemId: wi.id, taskId: wi.id, station: `${what}_check` });
     const done = await this.#inspect(project, wi, runId, log, { role: 'reviewer', station, rolePrompt: () => checkerPrompt(what), input });
+    // Out of budget is not a verdict on the spec or plan: stop and wait for a person.
+    const stop = done.ok ? undefined : /budget: .*/.exec(done.error)?.[0];
+    if (stop) {
+      await this.#emit(wi.id, [{ type: 'run_ended', at: this.#clock(), runId, outcome: 'limit_reached' }]);
+      await this.#block(wi, stop, onProgress);
+      return undefined;
+    }
     const verdict = done.ok ? parseCheck(done.summary) : { verdict: 'rejected' as const, reasons: [`The ${what} check could not run: ${done.error}`] };
     await log.write({ type: 'check_decided', what, ...verdict });
     await this.#emit(wi.id, [{ type: 'run_ended', at: this.#clock(), runId, outcome: done.ok ? 'succeeded' : 'failed' }]);
@@ -1037,7 +1097,7 @@ export class Orchestrator {
       const contextFiles = pack.files.map((f) => f.path);
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-      const done = await this.#runAgent(log, { runId: `${runId}-tester`, profile, sandbox, rolePrompt: testerPrompt(project.config, contextFiles), input: testerInput(spec, task), contextFiles, tools: { allow: [], deny: [] }, limits });
+      const done = await this.#runAgent(log, { runId: `${runId}-tester`, profile, sandbox, rolePrompt: testerPrompt(project.config, contextFiles), input: testerInput(spec, task), contextFiles, tools: { allow: [], deny: [] }, limits }, { project, workItemId, taskId: task.id });
       const cost = done?.total.costUsd ?? 0;
       if (done?.outcome !== 'succeeded') {
         await log.write({ type: 'acceptance_tests', files: [], note: `the tester run ${done?.outcome ?? 'ended without a result'}` });
@@ -1235,13 +1295,47 @@ export class Orchestrator {
     ]);
   }
 
-  /** Runs one agent to completion, logging every event; returns its `done` event. */
-  async #runAgent(log: RunLog, request: Parameters<AgentRuntime['start']>[0]): Promise<Extract<AgentEvent, { type: 'done' }> | undefined> {
-    const run = await this.#deps.runtime.start(request);
+  /**
+   * Every agent run goes through here: it gets only what's left under the caps that apply,
+   * and what it cost is recorded against the task (or work item) and the requester. With
+   * nothing left it doesn't start, and reports a `budget: …` error instead.
+   */
+  async #runAgent(
+    log: RunLog,
+    request: Parameters<AgentRuntime['start']>[0],
+    charge: { project: Project; workItemId: string; taskId?: string },
+  ): Promise<Extract<AgentEvent, { type: 'done' }> | undefined> {
+    const wi = await this.#mustLoad(charge.workItemId);
+    const task = charge.taskId ? wi.tasks.find((t) => t.id === charge.taskId) : undefined;
+    const budget = checkBudget(charge.project.config, task, await userSpend(this.#deps.store, wi.requester, this.#clock()));
+    if (budget.stop) {
+      await log.write({ type: 'budget_stopped', reason: budget.stop });
+      return { type: 'done', runId: request.runId, seq: 0, at: this.#clock(), outcome: 'limit_reached', error: budget.stop, total: { ...ZERO_USAGE } };
+    }
+    const asked = request.limits.maxSpendUsd ?? Infinity;
+    const cap = Math.min(asked, budget.allowedUsd);
+    const run = await this.#deps.runtime.start({ ...request, limits: { ...request.limits, maxSpendUsd: cap } });
     let done: Extract<AgentEvent, { type: 'done' }> | undefined;
     for await (const event of run.events) {
       await log.write({ type: 'agent_event', event });
       if (event.type === 'done') done = event;
+    }
+    await this.#emit(charge.workItemId, [
+      {
+        type: 'agent_cost_recorded',
+        at: this.#clock(),
+        runId: request.runId,
+        subjectId: charge.taskId ?? charge.workItemId,
+        role: request.profile.role,
+        requester: wi.requester,
+        costUsd: done?.total.costUsd ?? 0,
+      },
+    ]);
+    // A run stopped at the limit the caps set is a budget stop, not the task's fault.
+    if (done && done.outcome === 'limit_reached' && Number.isFinite(cap) && done.total.costUsd >= cap * 0.9) {
+      const latest = await this.#mustLoad(charge.workItemId);
+      const after = checkBudget(charge.project.config, latest.tasks.find((t) => t.id === charge.taskId), await userSpend(this.#deps.store, wi.requester, this.#clock()));
+      done = { ...done, error: after.stop ?? `budget: the run used the $${cap.toFixed(2)} left under the caps` };
     }
     return done;
   }
@@ -1429,11 +1523,13 @@ function waitingSummary(wi: WorkItem): string {
   const merge = count((t) => t.state === 'ready' && t.changeApproved);
   const escalated = count((t) => t.state === 'escalated');
   const failed = count((t) => t.state === 'failed');
+  const paused = count((t) => t.state === 'budget_exceeded');
   const blocked = count((t) => t.state === 'queued');
   if (review) parts.push(`${review} ready for review`);
   if (merge) parts.push(`${merge} approved, to merge`);
   if (escalated) parts.push(`${escalated} escalated`);
   if (failed) parts.push(`${failed} failed`);
+  if (paused) parts.push(`${paused} paused for budget`);
   if (blocked) parts.push(`${blocked} waiting on ${blocked > 1 ? 'their' : 'its'} dependencies`);
   return parts.length ? `tasks: ${parts.join(', ')}` : 'nothing';
 }

@@ -79,6 +79,10 @@ export interface Task {
   changeApproved: boolean;
   /** State to return to when an exceeded budget is extended. */
   resumeState?: 'building' | 'verifying';
+  /** Model spend on this task so far, every attempt and agent together. */
+  spentUsd: number;
+  /** The task's spend limit, when someone raised it above the project's `per_task_usd`. */
+  budgetUsd?: number;
   mergedSha?: string;
   lastReason?: string;
   /** The latest Verify result, the basis for rework feedback and the change gate. */
@@ -166,6 +170,8 @@ export interface WorkItem {
   specQuestions?: string[];
   /** Plan awaiting the plan check; moved to `tasks` once approved. */
   proposedTasks: Task[];
+  /** Model spend on the work item so far, its own agents and its tasks'. */
+  spentUsd: number;
   tasks: Task[];
   gateDecisions: GateDecision[];
   runs: Run[];

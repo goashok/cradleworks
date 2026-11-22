@@ -192,6 +192,24 @@ describe('factory submit', () => {
   });
 });
 
+describe('factory budget', () => {
+  it('shows what a requester spent against the caps, and refuses to extend a task that is not paused', async () => {
+    writeFileSync(join(checkout, '.factory/factory.yaml'), `${FACTORY_YAML}budgets: { per_user_daily_usd: 20 }\n`);
+    const taskFile = join(root, 'task.md');
+    writeFileSync(taskFile, '# Add a changelog\n');
+    const submitted = await factory(['submit', taskFile]);
+    const taskId = /factory approve (task_\S+)/.exec(submitted.stdout)![1]!;
+
+    const shown = await factory(['budget']);
+    expect(shown.code).toBe(0);
+    expect(shown.stdout).toMatch(/^tester\n {2}today \(\d{4}-\d{2}-\d{2}\) +\$0\.00 of \$20\.00\n {2}month \(\d{4}-\d{2}\) +\$0\.00 {2}\(no cap\)\n {2}per task +\$5\.00 over all attempts\n$/);
+    expect(await factory(['budget', 'extend', taskId, '--usd', '2'])).toMatchObject({ code: 2, stderr: expect.stringMatching(/is ready, not paused for budget/) });
+    expect(await factory(['budget', 'extend', '--user', 'tester', '--usd', '5'])).toMatchObject({ code: 0, stdout: expect.stringContaining("Raised tester's daily cap by $5.00") });
+    expect((await factory(['budget'])).stdout).toContain('$0.00 of $25.00 ($20.00 + $5.00 granted)');
+    expect(await factory(['budget', 'extend', '--user', 'tester'])).toMatchObject({ code: 2 });
+  });
+});
+
 describe('factory validate', () => {
   it('checks a project without running anything', async () => {
     const r = await factory(['validate']);

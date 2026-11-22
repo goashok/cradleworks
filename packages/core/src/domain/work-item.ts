@@ -37,6 +37,7 @@ export function applyEvent(current: WorkItem | undefined, event: WorkItemEvent):
       maxReworkLoops: event.maxReworkLoops,
       ...(event.baseBranch ? { baseBranch: event.baseBranch } : {}),
       proposedTasks: [],
+      spentUsd: 0,
       tasks: [],
       gateDecisions: [],
       runs: [],
@@ -62,6 +63,7 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
 
   // Runs may finish after the work item has stopped; everything else needs a live item.
   if (event.type === 'run_ended') return endRun(wi, event.runId, event.outcome, event.at, fail);
+  if (event.type === 'agent_cost_recorded') return recordCost(wi, event);
   if (TERMINAL_WORK_ITEM_STATES.has(wi.state)) fail('the work item has ended');
   if (wi.state === 'blocked' && !['work_item_unblocked', 'work_item_failed', 'work_item_cancelled'].includes(event.type)) {
     fail('the work item is blocked');
@@ -214,14 +216,17 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       expectTaskState(task, ['building', 'verifying'], fail);
       task.resumeState = task.state as 'building' | 'verifying';
       task.state = 'budget_exceeded';
-      task.lastReason = `budget exceeded at $${event.spentUsd.toFixed(2)}`;
+      task.lastReason = event.reason ?? `budget exceeded at $${event.spentUsd.toFixed(2)}`;
       break;
     }
 
     case 'task_budget_extended': {
       const task = findTask(wi, event.taskId, fail);
       expectTaskState(task, ['budget_exceeded'], fail);
-      task.state = task.resumeState ?? 'building';
+      if (!Number.isFinite(event.newLimitUsd) || event.newLimitUsd <= 0) fail('the new limit must be a positive number');
+      // A build cut off by its budget builds again; a verify carries on where it stopped.
+      task.state = task.resumeState === 'verifying' ? 'verifying' : 'rework';
+      task.budgetUsd = event.newLimitUsd;
       delete task.resumeState;
       break;
     }
@@ -389,7 +394,16 @@ function newTask(id: string, specId: string, title: string, dependsOn: string[],
     gateReworks: 0,
     extraLoops: 0,
     changeApproved: false,
+    spentUsd: 0,
   };
+}
+
+function recordCost(wi: WorkItem, event: Extract<WorkItemEvent, { type: 'agent_cost_recorded' }>): void {
+  if (!Number.isFinite(event.costUsd) || event.costUsd < 0) throw new IllegalTransitionError(event.type, wi.state, 'costUsd must be a non-negative number');
+  // Work items saved before costs were recorded have no totals yet.
+  wi.spentUsd = (wi.spentUsd ?? 0) + event.costUsd;
+  const task = wi.tasks.find((t) => t.id === event.subjectId);
+  if (task) task.spentUsd = (task.spentUsd ?? 0) + event.costUsd;
 }
 
 function hasCycle(tasks: ReadonlyArray<{ taskId: string; dependsOn: string[] }>): boolean {

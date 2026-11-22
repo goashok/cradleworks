@@ -60,12 +60,14 @@ export type WorkItemEvent =
   | (Base & { type: 'task_interrupted'; taskId: string; reason: string })
   | (Base & { type: 'task_retry_granted'; taskId: string; grantedBy: string; extraLoops: number; note?: string })
   | (Base & { type: 'task_merged'; taskId: string; sha: string })
-  | (Base & { type: 'task_budget_exceeded'; taskId: string; spentUsd: number })
+  | (Base & { type: 'task_budget_exceeded'; taskId: string; spentUsd: number; reason?: string })
   | (Base & { type: 'task_budget_extended'; taskId: string; extendedBy: string; newLimitUsd: number })
   | (Base & { type: 'task_failed'; taskId: string; reason: string })
   | (Base & { type: 'task_cancelled'; taskId: string; reason: string })
   | (Base & { type: 'run_started'; runId: string; subjectId: string; station: Station; agentProfile?: AgentProfile })
   | (Base & { type: 'run_ended'; runId: string; outcome: RunOutcome })
+  /** What one agent run cost, charged to the task (or the work item) and the requester. */
+  | (Base & { type: 'agent_cost_recorded'; runId: string; subjectId: string; role: string; requester: string; costUsd: number })
   | (Base & { type: 'work_item_blocked'; reason: string })
   | (Base & { type: 'work_item_unblocked' })
   | (Base & { type: 'work_item_failed'; reason: string })
@@ -97,6 +99,7 @@ export const WORK_ITEM_EVENT_TYPES: ReadonlySet<WorkItemEventType> = new Set<Wor
   'task_cancelled',
   'run_started',
   'run_ended',
+  'agent_cost_recorded',
   'work_item_blocked',
   'work_item_unblocked',
   'work_item_failed',

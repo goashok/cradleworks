@@ -27,7 +27,8 @@ export type RunLogEntry =
   | { type: 'spec_answer'; kind: 'questions' | 'spec' | 'unreadable' }
   | { type: 'plan_checked'; attempt: number; problems: string[] }
   | { type: 'check_decided'; what: 'spec' | 'plan'; verdict: 'approved' | 'rejected'; reasons: string[] }
-  | { type: 'acceptance_tests'; files: string[]; note?: string };
+  | { type: 'acceptance_tests'; files: string[]; note?: string }
+  | { type: 'budget_stopped'; reason: string };
 
 export class RunLog {
   readonly runId: string;

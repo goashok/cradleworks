@@ -42,6 +42,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await reject(rest, io);
       case 'retry':
         return await retry(rest, io);
+      case 'budget':
+        return await budget(rest, io);
       case 'resume':
         return await resume(rest, io);
       case 'cancel':
@@ -91,6 +93,9 @@ const USAGE = `Usage:
                                     Give an escalated task more attempts
   factory resume <id>               Continue a task from where it stands, or unblock a work item
   factory sync [<id>]               Pick up approvals, requested changes and merges from pull requests
+  factory budget [<user>]           What a requester spent today and this month, against the caps
+  factory budget extend <id> [--usd <n>] | --user <name> --usd <n> [--month]
+                                    Raise a paused task's cap and carry on, or a requester's cap
   factory cancel <id> [--reason <text>]
                                     Cancel a work item
   factory validate [<dir>]          Check a project's .factory/ setup without running anything
@@ -215,6 +220,8 @@ function printProgress(io: CliEnv, p: Progress): void {
       if (o.outcome === 'pr_opened') {
         io.stdout(o.reworked ? `Pushed rework ${p.attempt - 1} to ${o.pr.url}\n  run    ${o.runId}\n` : `Opened ${o.pr.url}\n  branch ${o.branch}\n  run    ${o.runId}\n`);
         io.stdout('Verifying...\n');
+      } else if (o.outcome === 'paused') {
+        io.stdout(`Paused: ${o.reason.replace(/^budget: /, '')}\n  run ${o.runId}\n`);
       } else if (o.outcome === 'declined' && o.reason.startsWith('paused:')) {
         io.stdout(`Paused: ${o.reason.slice('paused: '.length)}\n  run ${o.runId}\n`);
       } else if (o.outcome === 'declined') {
@@ -250,6 +257,9 @@ function printOutcome(io: CliEnv, taskId: string, workItemId: string, outcome: T
       return 0;
     case 'merged':
       return 0;
+    case 'budget_exceeded':
+      io.stdout(`Paused for budget: ${(outcome.reason ?? '').replace(/^budget: /, '')}\n  spend so far  factory status ${workItemId}\n  carry on     factory budget extend ${taskId} --usd <amount>\n`);
+      return 1;
     case 'escalated':
       io.stdout(`Escalated: ${outcome.reason ?? 'needs a person'}\n  details     factory status ${workItemId}\n  try again   factory retry ${taskId} [--note "..."]\n  give up     factory cancel ${workItemId}\n`);
       return 1;
@@ -523,6 +533,7 @@ function describe(wi: WorkItem): string {
     `  requester  ${wi.requester}`,
     ...(wi.source.id.startsWith('submitted:') ? [] : [`  issue      ${wi.source.url}`]),
     ...(wi.baseBranch ? [`  base       ${wi.baseBranch}`] : []),
+    `  spent      $${(wi.spentUsd ?? 0).toFixed(2)}`,
     `  created    ${wi.createdAt}`,
     `  updated    ${wi.updatedAt}`,
   ];
@@ -546,6 +557,7 @@ function describe(wi: WorkItem): string {
     if (t.dependsOn.length && t.state === 'queued') lines.push(`    after   ${t.dependsOn.join(', ')}`);
     if (t.pr) lines.push(`    pr      ${t.pr.url}`);
     if (t.branch) lines.push(`    branch  ${t.branch}`);
+    if (t.spentUsd) lines.push(`    spent   $${t.spentUsd.toFixed(2)}${t.budgetUsd ? ` (cap raised to $${t.budgetUsd.toFixed(2)})` : ''}`);
     if (t.lastReason && t.lastReason !== t.evidence?.reason) lines.push(`    reason  ${t.lastReason}`);
     if (t.reworkLoops + t.gateReworks > 0) lines.push(`    rework  ${t.reworkLoops} from verify, ${t.gateReworks} from the gate (limit ${wi.maxReworkLoops}${t.extraLoops ? ` + ${t.extraLoops} granted` : ''})`);
     if (t.evidence) {
@@ -575,6 +587,57 @@ function nextStep(t: Task): string | undefined {
       return `factory resume ${t.id}`;
     default:
       return undefined;
+  }
+}
+
+
+// --- budget -------------------------------------------------------------------
+
+/**
+ * `factory budget [<user>]`: what a requester spent today and this month against the caps.
+ * `factory budget extend <task> [--usd <n>]`: raise a paused task's cap and let it carry on.
+ * `factory budget extend --user <name> --usd <n> [--month]`: raise a requester's cap for now.
+ */
+async function budget(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { usd: { type: 'string' }, user: { type: 'string' }, month: { type: 'boolean' }, 'no-run': { type: 'boolean' } } });
+  const money = (n: number) => `$${n.toFixed(2)}`;
+  if (positionals[0] === 'extend') {
+    const usd = values.usd === undefined ? 0 : Number(values.usd);
+    if (!Number.isFinite(usd) || usd < 0) throw new UsageError('--usd must be an amount in dollars, 0 or more');
+    if (values.user) {
+      if (positionals.length > 1) throw new UsageError('budget extend takes a task id or --user, not both');
+      if (usd <= 0) throw new UsageError('budget extend --user needs --usd <amount>');
+      const ctx = await openProject(io);
+      try {
+        const period = values.month ? 'month' : 'day';
+        await ctx.orchestrator.extendUserBudget({ requester: values.user, period, extraUsd: usd, by: await requester(ctx.repoRoot, io) });
+        io.stdout(`Raised ${values.user}'s ${period === 'day' ? 'daily' : 'monthly'} cap by ${money(usd)} for this ${period}. Resume a paused task with factory budget extend <task>\n`);
+        return 0;
+      } finally {
+        await ctx.close();
+      }
+    }
+    return withTask(positionals.slice(1), 'budget extend', io, async (ctx, wi, task) => {
+      const limit = await ctx.orchestrator.extendTaskBudget(ctx.project, wi.id, task.id, { by: await requester(ctx.repoRoot, io), extraUsd: usd });
+      io.stdout(`${task.id} may now spend ${money(limit)} in all (${money(task.spentUsd ?? 0)} spent)\n`);
+      return values['no-run'] ? 0 : continueTask(ctx, io, wi.id, task.id);
+    });
+  }
+  if (positionals.length > 1) throw new UsageError('budget takes at most one requester name');
+  const ctx = await openProject(io);
+  try {
+    const who = positionals[0] ?? (await requester(ctx.repoRoot, io));
+    const spend = await ctx.orchestrator.spendOf(who);
+    const caps = ctx.project.config.budgets;
+    const line = (label: string, spent: number, cap: number | undefined, extra: number) =>
+      `  ${label.padEnd(20)}${money(spent)}${cap === undefined ? '  (no cap)' : ` of ${money(cap + extra)}${extra ? ` (${money(cap)} + ${money(extra)} granted)` : ''}`}\n`;
+    io.stdout(`${who}\n`);
+    io.stdout(line(`today (${spend.day.key})`, spend.day.spentUsd, caps.perUserDailyUsd, spend.day.extraUsd));
+    io.stdout(line(`month (${spend.month.key})`, spend.month.spentUsd, caps.perUserMonthlyUsd, spend.month.extraUsd));
+    io.stdout(`  ${"per task".padEnd(20)}${money(caps.perTaskUsd)} over all attempts\n`);
+    return 0;
+  } finally {
+    await ctx.close();
   }
 }
 
