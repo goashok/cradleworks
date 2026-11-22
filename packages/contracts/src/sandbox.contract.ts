@@ -88,6 +88,35 @@ export function describeSandboxContract(name: string, setup: () => Promise<Sandb
       expect(result.durationMs).toBeLessThan(8000);
     });
 
+    it('streams output from a spawned command as it arrives', async () => {
+      const s = await create({ env: { FROM_SPEC: 'spec' } });
+      const started = Date.now();
+      const proc = await f.adapter.spawn(s, ['sh', '-c', 'echo "first $FROM_SPEC"; read line; echo "got $line"; sleep 2; echo last; echo oops >&2; exit 4'], { stdin: 'piped\n' });
+      const seen: Array<{ line: string; ms: number }> = [];
+      for await (const line of proc.lines) seen.push({ line, ms: Date.now() - started });
+      expect(seen.map((l) => l.line)).toEqual(['first spec', 'got piped', 'last']);
+      expect(seen[0]!.ms).toBeLessThan(seen[2]!.ms - 1000); // the first line came well before the end
+      expect(await proc.result).toMatchObject({ exitCode: 4, stdout: '', stderr: 'oops\n', timedOut: false });
+    });
+
+    it('kills a spawned command and what it started, and applies its timeout', async () => {
+      const s = await create();
+      const proc = await f.adapter.spawn(s, ['sh', '-c', 'sh -c "sleep 30; echo child-survived" & echo started; sleep 30']);
+      const it = proc.lines[Symbol.asyncIterator]();
+      expect((await it.next()).value).toBe('started');
+      await proc.kill();
+      const rest: string[] = [];
+      for (let r = await it.next(); !r.done; r = await it.next()) rest.push(r.value);
+      const killed = await proc.result;
+      expect(killed.exitCode).not.toBe(0);
+      expect(rest).toEqual([]);
+      await proc.kill(); // safe after it ended
+
+      const timed = await f.adapter.spawn(s, ['sleep', '30'], { timeoutSeconds: 1 });
+      for await (const _ of timed.lines) void _;
+      expect(await timed.result).toMatchObject({ timedOut: true });
+    });
+
     it('shares the checkout with the host', async () => {
       const s = await create();
       await sh(s, 'echo made > made.txt');
@@ -118,9 +147,13 @@ export function describeSandboxContract(name: string, setup: () => Promise<Sandb
       expect((await sh(b, 'test -e only-a.txt')).exitCode).not.toBe(0);
     });
 
-    it('accepts a network policy change', async () => {
+    it('applies a network policy change, or refuses one it cannot enforce', async () => {
       const s = await create();
-      await f.adapter.setNetworkPolicy(s, { mode: 'allowlist', allow: ['registry.example.invalid'] });
+      await f.adapter.setNetworkPolicy(s, { mode: 'none', allow: [] });
+      // An adapter may lack a way to filter traffic; it must then refuse, never widen access silently.
+      await f.adapter.setNetworkPolicy(s, { mode: 'allowlist', allow: ['registry.example.invalid'] }).catch((error: unknown) => {
+        expect(error).toMatchObject({ name: 'AdapterError', code: 'invalid_input' });
+      });
     });
 
     it('destroys cleanly, twice, and refuses use afterwards', async () => {

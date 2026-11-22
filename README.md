@@ -12,6 +12,7 @@ packages/
   config/       loads .factory/factory.yaml over defaults/factory.yaml, with line-numbered errors
   contracts/    contract test suites every adapter must pass, and fakes that pass them
   adapter-github/  GitHub SourceControl (git over HTTPS + REST); signs in with GITHUB_TOKEN or the gh login
+  adapter-local/   Sandbox: one git worktree + one Docker container per task (`local-docker`)
   cli/          the `factory` command
 defaults/
   factory.yaml  factory-wide defaults for any key a project omits
@@ -44,6 +45,10 @@ factory status <work-item-id> # tasks, PRs, runs and gate decisions
 ```
 
 Until the package is installed globally, run it as `packages/cli/src/main.ts`. State lives in `~/.cradleworks` (override with `CRADLEWORKS_HOME`).
+
+## Sandbox network
+
+`sandbox.network` in `.factory/factory.yaml` is enforced by a per-sandbox egress proxy: the sandbox sits on an internal Docker network with no route out, and the proxy lets through only listed hosts (`host`, `host:port`, or `*.domain`; no port means 80 and 443). Names that resolve to private or loopback addresses are refused. Tools find the proxy through the usual `HTTP(S)_PROXY` variables and `JAVA_TOOL_OPTIONS`.
 
 ## The core rule
 

@@ -71,6 +71,7 @@ const fakes = {
     id: 'fake',
     create: notImplemented,
     exec: notImplemented,
+    spawn: notImplemented,
     copyIn: notImplemented,
     copyOut: notImplemented,
     setNetworkPolicy: notImplemented,

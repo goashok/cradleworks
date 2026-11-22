@@ -110,6 +110,22 @@ describe('valid config', () => {
 });
 
 describe('bad config gives line-numbered errors', () => {
+  it('accepts host, host:port and *.domain allow-list entries', () => {
+    const text = `${MINIMAL}sandbox:\n  network:\n    mode: allowlist\n    allow:\n      - repo.maven.apache.org\n      - registry.npmjs.org:443\n      - "*.githubusercontent.com"\n`;
+    expect(parseProjectConfig(project(text), DEFAULTS).network).toEqual({
+      mode: 'allowlist',
+      allow: ['repo.maven.apache.org', 'registry.npmjs.org:443', '*.githubusercontent.com'],
+    });
+  });
+
+  it('points at a malformed allow-list entry', () => {
+    const text = `${MINIMAL}sandbox:\n  network:\n    mode: allowlist\n    allow:\n      - repo.maven.apache.org\n      - https://registry.npmjs.org/\n      - "*"\n`;
+    expect(issuesOf(text).map((i) => [i.line, i.path, i.message])).toEqual([
+      [MINIMAL.split('\n').length + 5, 'sandbox.network.allow.1', 'sandbox.network.allow: "https://registry.npmjs.org/" should be a host name, not a URL'],
+      [MINIMAL.split('\n').length + 6, 'sandbox.network.allow.2', 'sandbox.network.allow: "*" is not a valid host name (wildcards are allowed only as a leading "*.")'],
+    ]);
+  });
+
   it('points at a bad value, with a suggestion', () => {
     const issues = issuesOf(SPEC_EXAMPLE.replace('spec_approval: human ', 'spec_approval: humans'));
     expect(issues).toEqual([

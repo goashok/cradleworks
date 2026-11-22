@@ -1,0 +1,16 @@
+{
+  "name": "@cradleworks/adapter-local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Sandbox: one git worktree and one Docker container per task",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@cradleworks/contracts": "workspace:*"
+  }
+}

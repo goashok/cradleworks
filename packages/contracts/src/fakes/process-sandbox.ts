@@ -12,6 +12,7 @@ import {
   type NetworkPolicy,
   type Sandbox,
   type SandboxHandle,
+  type SandboxProcess,
   type SandboxSpec,
 } from '@cradleworks/interfaces';
 import { git, GitError } from './git.ts';
@@ -106,6 +107,58 @@ export class ProcessSandbox implements Sandbox {
       child.stdin.on('error', () => undefined);
       child.stdin.end(options.stdin ?? '');
     });
+  }
+
+  async spawn(sandbox: SandboxHandle, command: string[], options: ExecOptions = {}): Promise<SandboxProcess> {
+    const entry = this.#entry(sandbox, 'spawn');
+    const [file, ...args] = command;
+    if (file === undefined) throw fail('invalid_input', 'spawn', 'command must not be empty');
+    const cwd = this.#inside(entry, options.cwd ?? '.', 'spawn');
+    const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: entry.handle.workspacePath, ...entry.env, ...(options.env ?? {}) };
+    const started = Date.now();
+    const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    const err: Buffer[] = [];
+    let timedOut = false;
+    let ended = false;
+    child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
+    const kill = async () => {
+      if (!ended) killGroup(child.pid);
+    };
+    const timer =
+      options.timeoutSeconds !== undefined
+        ? setTimeout(() => {
+            timedOut = true;
+            void kill();
+          }, options.timeoutSeconds * 1000)
+        : undefined;
+    const result = new Promise<ExecResult>((resolvePromise, reject) => {
+      child.on('error', (error) => {
+        ended = true;
+        if (timer) clearTimeout(timer);
+        reject(fail('invalid_input', 'spawn', `cannot run ${file}: ${error.message}`, error));
+      });
+      child.on('close', (code, signal) => {
+        ended = true;
+        if (timer) clearTimeout(timer);
+        resolvePromise({ exitCode: code ?? (signal ? 137 : 1), stdout: '', stderr: Buffer.concat(err).toString('utf8'), durationMs: Date.now() - started, timedOut });
+      });
+    });
+    result.catch(() => undefined);
+    child.stdin.on('error', () => undefined);
+    child.stdin.end(options.stdin ?? '');
+    async function* lines(): AsyncGenerator<string> {
+      let pending = '';
+      for await (const chunk of child.stdout as AsyncIterable<Buffer>) {
+        pending += chunk.toString('utf8');
+        let nl: number;
+        while ((nl = pending.indexOf('\n')) >= 0) {
+          yield pending.slice(0, nl);
+          pending = pending.slice(nl + 1);
+        }
+      }
+      if (pending !== '') yield pending;
+    }
+    return { lines: lines(), result, kill };
   }
 
   async copyIn(sandbox: SandboxHandle, hostPath: string, sandboxPath: string): Promise<void> {

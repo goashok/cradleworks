@@ -1,6 +1,8 @@
 // A small schema for factory.yaml. Validation collects every problem with its path,
 // so the loader can point each one at a line in the file that caused it.
 
+import { parseAllowEntry } from '@cradleworks/interfaces';
+
 export type Path = ReadonlyArray<string | number>;
 
 export type Field =
@@ -9,7 +11,7 @@ export type Field =
   | { kind: 'number'; required?: boolean; min?: number; integer?: boolean; exclusiveMin?: boolean }
   | { kind: 'boolean'; required?: boolean }
   /** A string or a list of strings; normalised to a list. */
-  | { kind: 'stringList'; required?: boolean }
+  | { kind: 'stringList'; required?: boolean; check?: (item: string) => string | undefined }
   | {
       kind: 'object';
       required?: boolean;
@@ -116,7 +118,14 @@ export const FACTORY_YAML: Field = {
           required: true,
           fields: {
             mode: { kind: 'enum', values: ['none', 'allowlist'], required: true },
-            allow: { kind: 'stringList', required: true },
+            allow: {
+              kind: 'stringList',
+              required: true,
+              check: (item) => {
+                const parsed = parseAllowEntry(item);
+                return 'error' in parsed ? parsed.error : undefined;
+              },
+            },
           },
         },
       },
@@ -174,6 +183,9 @@ export function validate(value: unknown, field: Field, path: Path = [], issues: 
       items.forEach((item, i) => {
         if (typeof item !== 'string' || item.trim() === '') {
           issues.push({ path: [...path, i], message: `${where}[${i}] must be a non-empty string (got ${describe(item)})` });
+        } else {
+          const problem = field.check?.(item);
+          if (problem) issues.push({ path: typeof value === 'string' ? path : [...path, i], message: `${where}: ${problem}` });
         }
       });
       break;
