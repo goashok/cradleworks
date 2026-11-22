@@ -15,7 +15,7 @@ import {
   type TrackerLink,
   type WatchQuery,
 } from '@cradleworks/interfaces';
-import { defaultTokenProvider, type TokenProvider } from './auth.ts';
+import { tokenProviderFromEnv, type TokenProvider } from './auth.ts';
 import { httpError } from './github-source-control.ts';
 
 const ADAPTER = 'github-issues';
@@ -58,10 +58,9 @@ export class GitHubIssuesTracker implements Tracker {
   readonly #api: string;
   readonly #fetch: typeof fetch;
   readonly #pollMs: number;
-  #token: Promise<string> | undefined;
 
   constructor(options: GitHubIssuesOptions = {}) {
-    this.#tokenProvider = options.token ?? defaultTokenProvider;
+    this.#tokenProvider = options.token ?? tokenProviderFromEnv();
     this.#api = (options.apiBase ?? 'https://api.github.com').replace(/\/$/, '');
     this.#fetch = options.fetch ?? fetch;
     this.#pollMs = (options.pollSeconds ?? 60) * 1000;
@@ -212,11 +211,10 @@ export class GitHubIssuesTracker implements Tracker {
   }
 
   #getToken(): Promise<string> {
-    this.#token ??= this.#tokenProvider().catch((cause: unknown) => {
-      this.#token = undefined;
+    // Providers cache, and refresh tokens that expire.
+    return this.#tokenProvider().catch((cause: unknown) => {
       throw new AdapterError('unauthorized', cause instanceof Error ? cause.message : String(cause), { adapter: ADAPTER, operation: 'auth', cause });
     });
-    return this.#token;
   }
 }
 

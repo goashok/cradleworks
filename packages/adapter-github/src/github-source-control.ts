@@ -19,7 +19,7 @@ import {
   type SourceControl,
   type WorkingCopy,
 } from '@cradleworks/interfaces';
-import { defaultTokenProvider, type TokenProvider } from './auth.ts';
+import { tokenProviderFromEnv, type TokenProvider } from './auth.ts';
 import { git, GitCommandError, gitExitCode, type GitIdentity } from './git.ts';
 
 const ADAPTER = 'github';
@@ -47,10 +47,9 @@ export class GitHubSourceControl implements SourceControl {
   readonly #web: string;
   readonly #identity: GitIdentity;
   readonly #fetch: typeof fetch;
-  #token: Promise<string> | undefined;
 
   constructor(options: GitHubOptions = {}) {
-    this.#tokenProvider = options.token ?? defaultTokenProvider;
+    this.#tokenProvider = options.token ?? tokenProviderFromEnv();
     this.#api = (options.apiBase ?? 'https://api.github.com').replace(/\/$/, '');
     this.#web = (options.webBase ?? 'https://github.com').replace(/\/$/, '');
     this.#identity = options.committer ?? { name: 'Cradleworks', email: 'factory@cradleworks.invalid' };
@@ -193,11 +192,10 @@ export class GitHubSourceControl implements SourceControl {
   }
 
   #getToken(): Promise<string> {
-    this.#token ??= this.#tokenProvider().catch((cause: unknown) => {
-      this.#token = undefined;
+    // Providers cache, and refresh tokens that expire.
+    return this.#tokenProvider().catch((cause: unknown) => {
       throw new AdapterError('unauthorized', cause instanceof Error ? cause.message : String(cause), { adapter: ADAPTER, operation: 'auth', cause });
     });
-    return this.#token;
   }
 
   async #git(args: string[], operation: string, cwd: string | undefined, authenticated = false): Promise<string> {

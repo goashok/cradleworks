@@ -4,7 +4,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AdapterError, type CI, type CIArtifact, type CIJob, type CIRunRef, type CIRunState, type CIRunStatus, type RepoRef } from '@cradleworks/interfaces';
-import { defaultTokenProvider, type TokenProvider } from './auth.ts';
+import { tokenProviderFromEnv, type TokenProvider } from './auth.ts';
 import { httpError } from './github-source-control.ts';
 
 const ADAPTER = 'github-actions';
@@ -42,10 +42,9 @@ export class GitHubActionsCI implements CI {
   readonly #api: string;
   readonly #fetch: typeof fetch;
   readonly #clock: () => number;
-  #token: Promise<string> | undefined;
 
   constructor(options: GitHubActionsOptions = {}) {
-    this.#tokenProvider = options.token ?? defaultTokenProvider;
+    this.#tokenProvider = options.token ?? tokenProviderFromEnv();
     this.#api = (options.apiBase ?? 'https://api.github.com').replace(/\/$/, '');
     this.#fetch = options.fetch ?? fetch;
     this.#clock = options.clock ?? Date.now;
@@ -164,11 +163,10 @@ export class GitHubActionsCI implements CI {
   }
 
   #getToken(): Promise<string> {
-    this.#token ??= this.#tokenProvider().catch((cause: unknown) => {
-      this.#token = undefined;
+    // Providers cache, and refresh tokens that expire.
+    return this.#tokenProvider().catch((cause: unknown) => {
       throw new AdapterError('unauthorized', cause instanceof Error ? cause.message : String(cause), { adapter: ADAPTER, operation: 'auth', cause });
     });
-    return this.#token;
   }
 }
 
