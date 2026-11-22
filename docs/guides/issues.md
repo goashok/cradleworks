@@ -127,6 +127,29 @@ that were waiting for it.
 the list and labels the issue `factory:merged`. The issue itself stays open, so close it when
 you're happy.
 
+## Write an issue, review a spec
+
+The spec agent works from the issue and the code, so it does better when the issue says:
+
+- **who has the problem, and what they're trying to do.** "Shop owners need their orders in a
+  spreadsheet" beats "add CSV export".
+- **what done looks like**, with any limits you already know: status codes, sizes, which callers
+  must keep working.
+- **what is out of scope**, if someone might reasonably assume it isn't.
+
+It doesn't need to say how to build it. The agent reads the code for that.
+
+Before you `/approve` a spec, check three things:
+
+1. **Each acceptance criterion is something you could check yourself**: an input, an output, a
+   status code, a message. These criteria are what the tester writes tests for and what the
+   reviewer judges against.
+2. **Nothing you asked for is missing, and nothing extra slipped in.** Extras belong under
+   "Out of scope".
+3. **The assumptions are ones you agree with.** Anything the issue left open is listed there.
+   This is the cheapest place to correct it: a `/reject` with one sentence costs a new spec
+   version, not a rebuilt pull request.
+
 ## Commands
 
 | Where | Command | Who | Does |
