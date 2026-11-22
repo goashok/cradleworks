@@ -557,6 +557,7 @@ function describe(wi: WorkItem): string {
     if (t.dependsOn.length && t.state === 'queued') lines.push(`    after   ${t.dependsOn.join(', ')}`);
     if (t.pr) lines.push(`    pr      ${t.pr.url}`);
     if (t.branch) lines.push(`    branch  ${t.branch}`);
+    if (t.protectedPaths?.length) lines.push(`    protected  ${t.protectedPaths.join(', ')} (needs a person to approve and merge)`);
     if (t.spentUsd) lines.push(`    spent   $${t.spentUsd.toFixed(2)}${t.budgetUsd ? ` (cap raised to $${t.budgetUsd.toFixed(2)})` : ''}`);
     if (t.lastReason && t.lastReason !== t.evidence?.reason) lines.push(`    reason  ${t.lastReason}`);
     if (t.reworkLoops + t.gateReworks > 0) lines.push(`    rework  ${t.reworkLoops} from verify, ${t.gateReworks} from the gate (limit ${wi.maxReworkLoops}${t.extraLoops ? ` + ${t.extraLoops} granted` : ''})`);
