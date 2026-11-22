@@ -1,6 +1,6 @@
 // Runs where a Docker engine answers (developer machines and CI); skipped elsewhere.
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -217,11 +217,24 @@ describe.skipIf(!haveDocker)('DockerSandbox', () => {
       expect(execFileSync('git', ['-C', base.source.path, 'worktree', 'list'], { encoding: 'utf8' })).not.toContain(s.taskId);
     });
 
-    it('removes orphaned containers left by a dead factory process', async () => {
+    it('removes orphaned containers left by a dead factory process, and spares a live one', async () => {
       const s = await create();
       const container = adapter.containerOf(s)!;
+      // This process is alive: another instance must leave its sandbox alone.
+      const other = new DockerSandbox({ rootDir: join(root, 'sandboxes'), docker });
+      expect(await other.pruneOrphans()).not.toContain(container);
+      expect(dockerOut(['ps', '--quiet', '--filter', `name=^${container}$`])).not.toBe('');
+      // A process that has exited owns nothing any more.
+      const gone = spawnSync('true').pid!;
+      const dead = new DockerSandbox({ rootDir: join(root, 'sandboxes'), docker, ownerPid: gone });
+      const orphan = await dead.create({ ...base, taskId: `${s.taskId}-dead`, branch: `factory/${s.taskId}-dead` });
+      const orphanContainer = dead.containerOf(orphan)!;
       const fresh = new DockerSandbox({ rootDir: join(root, 'sandboxes'), docker });
-      expect(await fresh.pruneOrphans()).toContain(container);
+      const pruned = await fresh.pruneOrphans();
+      expect(pruned).toContain(orphanContainer);
+      expect(pruned).not.toContain(container);
+      await adapter.destroy(s);
+      open.length = 0;
       expect(dockerOut(['ps', '--all', '--quiet', '--filter', `label=${SANDBOX_LABEL}=${s.taskId}`])).toBe('');
     });
   });

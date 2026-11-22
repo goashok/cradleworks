@@ -32,6 +32,8 @@ import { runProgram, streamProgram, type RunResult } from './run.ts';
 const ADAPTER = 'local-docker';
 export const WORKSPACE = '/workspace';
 export const SANDBOX_LABEL = 'dev.cradleworks.sandbox';
+/** The pid of the factory process that made a container or network; prune spares live owners. */
+export const OWNER_LABEL = 'dev.cradleworks.owner';
 const EXEC_MARKER = 'CRADLEWORKS_EXEC';
 const PROXY_ALIAS = 'egress-proxy';
 const PROXY_PORT = 3128;
@@ -64,6 +66,8 @@ export interface DockerSandboxOptions {
   proxyImage?: string;
   /** Defaults for every container. */
   defaults?: { cpus?: number; memoryMb?: number; pidsLimit?: number };
+  /** The owner pid recorded on containers. Default: this process. */
+  ownerPid?: number;
 }
 
 interface Entry {
@@ -89,11 +93,13 @@ export class DockerSandbox implements Sandbox {
   readonly #root: string;
   readonly #docker: string;
   readonly #options: DockerSandboxOptions;
+  readonly #owner: number;
   readonly #entries = new Map<string, Entry>();
   readonly #mavenSettings: string;
 
   constructor(options: DockerSandboxOptions) {
     this.#options = options;
+    this.#owner = options.ownerPid ?? process.pid;
     this.#root = resolve(options.rootDir);
     mkdirSync(this.#root, { recursive: true });
     // Docker Desktop maps only some host folders into its VM; resolve symlinks such as
@@ -139,6 +145,8 @@ export class DockerSandbox implements Sandbox {
         container,
         '--label',
         `${SANDBOX_LABEL}=${spec.taskId}`,
+        '--label',
+        `${OWNER_LABEL}=${this.#owner}`,
         '--network',
         egress?.network ?? 'none',
         '--cap-drop',
@@ -334,17 +342,24 @@ export class DockerSandbox implements Sandbox {
     await this.#removeWorktree(entry.handle.workspacePath, entry.sourcePath);
   }
 
-  /** Removes containers left by a factory process that died. Returns their names. */
+  /**
+   * Removes containers and networks left by a factory process that died. Another live
+   * process's sandboxes are never touched: each is labelled with its owner's pid, and only
+   * those whose owner is gone (or unlabelled ones, from before the label) are removed.
+   */
   async pruneOrphans(): Promise<string[]> {
-    const listed = await this.#run(['ps', '--all', '--filter', `label=${SANDBOX_LABEL}`, '--format', '{{.Names}}'], 'prune');
-    const live = new Set([...this.#entries.values()].flatMap((e) => [e.container, ...(e.egress ? [e.egress.proxy] : [])]));
-    const orphans = listed.stdout.split('\n').map((s) => s.trim()).filter((s) => s !== '' && !live.has(s));
+    const mine = new Set([...this.#entries.values()].flatMap((e) => [e.container, ...(e.egress ? [e.egress.proxy, e.egress.network] : [])]));
+    const orphaned = (out: string) =>
+      out
+        .split('\n')
+        .map((line) => line.trim().split('\t'))
+        .filter(([name, owner]) => name && !mine.has(name) && !ownerAlive(owner))
+        .map(([name]) => name!);
+    const listed = await this.#run(['ps', '--all', '--filter', `label=${SANDBOX_LABEL}`, '--format', `{{.Names}}\t{{.Label "${OWNER_LABEL}"}}`], 'prune');
+    const orphans = orphaned(listed.stdout);
     for (const name of orphans) await this.#removeContainer(name);
-    const nets = await this.#run(['network', 'ls', '--filter', `label=${SANDBOX_LABEL}`, '--format', '{{.Name}}'], 'prune');
-    const liveNets = new Set([...this.#entries.values()].flatMap((e) => (e.egress ? [e.egress.network] : [])));
-    for (const name of nets.stdout.split('\n').map((n) => n.trim())) {
-      if (name !== '' && !liveNets.has(name)) await this.#run(['network', 'rm', name], 'prune');
-    }
+    const nets = await this.#run(['network', 'ls', '--filter', `label=${SANDBOX_LABEL}`, '--format', `{{.Name}}\t{{.Label "${OWNER_LABEL}"}}`], 'prune');
+    for (const name of orphaned(nets.stdout)) await this.#run(['network', 'rm', name], 'prune');
     return orphans;
   }
 
@@ -362,7 +377,7 @@ export class DockerSandbox implements Sandbox {
     const egress: Egress = { proxy: `${name}-egress`, network: `${name}-net`, policyFile: join(this.#root, '.egress', taskId, 'allow.json') };
     writePolicy(egress.policyFile, rules);
     try {
-      const net = await this.#run(['network', 'create', '--internal', '--label', `${SANDBOX_LABEL}=${taskId}`, egress.network], 'create');
+      const net = await this.#run(['network', 'create', '--internal', '--label', `${SANDBOX_LABEL}=${taskId}`, '--label', `${OWNER_LABEL}=${this.#owner}`, egress.network], 'create');
       if (net.exitCode !== 0) throw dockerFailure('create', net);
       const proxy = await this.#run(
         [
@@ -373,6 +388,8 @@ export class DockerSandbox implements Sandbox {
           egress.proxy,
           '--label',
           `${SANDBOX_LABEL}=${taskId}`,
+          '--label',
+          `${OWNER_LABEL}=${this.#owner}`,
           '--network',
           'bridge',
           '--cap-drop',
@@ -501,6 +518,18 @@ function allowRules(policy: NetworkPolicy, operation: string): AllowRule[] {
 }
 
 /** Written whole and renamed into place, so the proxy never reads half a file. */
+/** Whether the factory process with this pid still runs; an unlabelled resource has no owner. */
+function ownerAlive(owner: string | undefined): boolean {
+  const pid = Number(owner);
+  if (!owner || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'; // alive, someone else's
+  }
+}
+
 /** Credentials for the gateway, beside the policy, readable by the owner only. */
 function writeGateways(policyFile: string, gateways: Record<string, CredentialGatewayInput>): void {
   const file = join(dirname(policyFile), 'gateways.json');
