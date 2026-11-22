@@ -1,6 +1,6 @@
 # Roadmap
 
-Each milestone ends with something that runs. M0 to M3 are done.
+Each milestone ends with something that runs. M0 to M4 are done.
 
 | | Milestone | Delivers | Exit check | Status |
 | --- | --- | --- | --- | --- |
@@ -8,8 +8,8 @@ Each milestone ends with something that runs. M0 to M3 are done.
 | M1 | Walking skeleton | State machine, event log, SQLite store, config, contract suites, GitHub adapter, Docker sandbox, Claude Code runtime, Build station, CLI | `factory submit` opens a PR on a reference project, logged and replayable | ✅ Done |
 | M2 | Verify and gates | Verify station (build, tests, CI, reviewer agent), evidence bundle on the PR, the change gate, the rework loop | A task loops through rework and reaches the change gate with evidence | ✅ Done |
 | M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | ✅ Done |
-| M4 | Budgets and security | Per-user caps, a hard-deny list, scoped tokens, an evaluation of microVM sandboxes | Budget-stop and deny-list tests pass | Next |
-| M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | |
+| M4 | Budgets and security | Per-user caps, a hard-deny list, scoped tokens, an evaluation of microVM sandboxes | Budget-stop and deny-list tests pass | ✅ Done |
+| M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | Next |
 | M6 | Portability and console | A second agent runtime (OpenAI Codex CLI), a non-GitHub adapter, a local web console | The pass rate holds with no core change | |
 | M7 | Real-codebase validation | The factory on a real repository the team didn't build | Results compared with today's baseline | |
 
@@ -48,6 +48,22 @@ Each milestone ends with something that runs. M0 to M3 are done.
 - **A tester agent** in Verify writes acceptance tests from the spec without seeing the change.
 - **More than one repository** through `related_repos`, and the approved spec committed with the
   first PR.
+
+## What M4 added
+
+- **Budgets that hold.** Every agent run's cost is recorded. `per_task_usd` covers all attempts
+  of a task, and per-requester daily and monthly caps cover everything they asked for. At a cap
+  the task pauses; `factory budget` shows spend and `factory budget extend` carries on.
+- **Hard rules no config turns off.** The factory pushes only `factory/*` branches and merges only
+  into the base branch. Changes to CI config, `.factory/` or `CODEOWNERS` wait for a person and
+  are never merged automatically.
+- **A secret scan before every push**, which escalates without ever repeating the value.
+- **The model credential out of the sandbox**, set by the sandbox's proxy through a gateway.
+- **Commands agents may not run**, and every network decision and refusal in the run log.
+- **Optional GitHub App tokens**: an hour long, repo-scoped, least privilege.
+- **Exit check:** on real issues with every gate set to `ai` and auto-merge on, a CI change was
+  held for a person, a planted secret was stopped before the push, and a task over its budget
+  paused while smaller ones merged. See also [MicroVM sandboxes](design/microvm-sandboxes.md).
 
 ## Open questions
 
