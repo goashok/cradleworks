@@ -35,6 +35,7 @@ export function applyEvent(current: WorkItem | undefined, event: WorkItemEvent):
       title: event.title,
       state: 'received',
       maxReworkLoops: event.maxReworkLoops,
+      ...(event.baseBranch ? { baseBranch: event.baseBranch } : {}),
       proposedTasks: [],
       tasks: [],
       gateDecisions: [],
@@ -84,6 +85,13 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       wi.state = 'awaiting_spec_approval';
       return;
 
+    case 'spec_questions_asked':
+      expectState(wi, ['specifying'], fail);
+      if (wi.specQuestions) fail('questions were already asked once');
+      if (event.questions.length === 0) fail('no questions to ask');
+      wi.specQuestions = [...event.questions];
+      return;
+
     case 'gate_decided':
       return decideGate(wi, event, fail);
 
@@ -97,7 +105,7 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       }
       if (hasCycle(event.tasks)) fail('task dependencies must not form a cycle');
       const specId = wi.spec?.specId ?? fail('no approved spec');
-      wi.proposedTasks = event.tasks.map((t) => newTask(t.taskId, specId, t.title, t.dependsOn, t.size, t.description));
+      wi.proposedTasks = event.tasks.map((t) => newTask(t.taskId, specId, t.title, t.dependsOn, t.size, t.description, t.repo));
       return;
     }
 
@@ -163,6 +171,22 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       expectTaskState(task, ['rework'], fail);
       task.state = 'building';
       task.changeApproved = false;
+      break;
+    }
+
+    case 'task_acceptance_tests_written': {
+      const task = findTask(wi, event.taskId, fail);
+      expectTaskState(task, ['verifying'], fail);
+      if (task.acceptanceTests) fail(`task ${task.id} already has acceptance tests`);
+      task.acceptanceTests = { runId: event.runId, files: [...event.files], patch: event.patch };
+      break;
+    }
+
+    case 'task_interrupted': {
+      const task = findTask(wi, event.taskId, fail);
+      expectTaskState(task, ['building'], fail);
+      task.state = 'rework';
+      task.lastReason = event.reason;
       break;
     }
 
@@ -351,7 +375,7 @@ function rollUp(tasks: Task[]): WorkItemState {
   return 'in_progress';
 }
 
-function newTask(id: string, specId: string, title: string, dependsOn: string[], size: Task['size'], description?: string): Task {
+function newTask(id: string, specId: string, title: string, dependsOn: string[], size: Task['size'], description?: string, repo?: string): Task {
   return {
     id,
     specId,
@@ -359,6 +383,7 @@ function newTask(id: string, specId: string, title: string, dependsOn: string[],
     dependsOn: [...dependsOn],
     size,
     ...(description !== undefined ? { description } : {}),
+    ...(repo !== undefined ? { repo } : {}),
     state: 'queued',
     reworkLoops: 0,
     gateReworks: 0,

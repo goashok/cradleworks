@@ -1,8 +1,9 @@
 # Cradleworks
 
-**Cradleworks is a software factory.** You hand it a written task. It runs a coding agent on that
-task in a locked-down sandbox, and it hands you back a pull request. Every step the agent took is
-recorded, so you can replay exactly what it did.
+**Cradleworks is a software factory.** You hand it a GitHub issue or a written task. It writes a
+spec, splits the work into tasks, runs a coding agent on each task in a locked-down sandbox,
+checks the result, and hands you back pull requests. Every step the agents took is recorded, so
+you can replay exactly what they did.
 
 ```console
 $ factory submit tasks/farewell.md
@@ -46,13 +47,17 @@ Cradleworks is early. This is the honest picture:
   with the reasons, and the fix lands on the same PR. The evidence is posted on the PR.
 - ✅ **A real change gate.** A task that passes waits for `factory approve` (or an approving
   review on the PR). The factory merges only the exact commit it verified.
+- ✅ **Issues to merged PRs.** `factory watch` picks up issues labelled `factory`. A spec agent
+  writes acceptance criteria (asking first if it must), and you `/approve` the spec on the issue.
+  A planner splits it into tasks, which build in parallel and merge in dependency order. A tester
+  agent writes acceptance tests from the spec for Verify to run ([guide](docs/guides/issues.md)).
 - ✅ **Full record.** Every step goes to an append-only event log. `factory log <run>` replays it.
 - ✅ **Per-project setup.** One `.factory/` folder describes a project: image, commands, rules and
   limits. `factory validate` checks it.
 - ✅ **Measured.** It has been run against a private suite of 30 graded tasks on two reference
   projects. The first baseline passed 26 of 29, for $2.27 in total ([results](docs/guides/evaluating.md)).
-- 🚧 **Not yet:** turning GitHub issues into specs and plans (M3), per-user budgets and scoped
-  tokens (M4), and a web console (M6). See the [roadmap](docs/roadmap.md).
+- 🚧 **Not yet:** per-user budgets and scoped tokens (M4), the eval running on every change and a
+  learning loop (M5), and a web console (M6). See the [roadmap](docs/roadmap.md).
 
 ## How it works, in one picture
 
@@ -103,6 +108,7 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 **Guides**
 - [Add your own project](docs/guides/add-a-project.md): write a `.factory/` folder and switch to GitHub
 - [Write good tasks](docs/guides/writing-tasks.md): what to put in a task file, and what the agent sees
+- [From an issue to merged PRs](docs/guides/issues.md): `factory watch`, the spec and plan gates, parallel tasks, the tester
 - [Verify, rework and approve](docs/guides/verify-and-approve.md): what's checked, the evidence,
   the change gate, and what to do when a task escalates
 - [Follow and replay runs](docs/guides/runs-and-logs.md): `status`, `log`, and where state lives

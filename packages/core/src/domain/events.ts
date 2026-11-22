@@ -15,6 +15,8 @@ export interface PlannedTask {
   size: TaskSize;
   /** Markdown: what to change and how to tell it is done. */
   description?: string;
+  /** Project the task changes, when it isn't the work item's own (a related repo). */
+  repo?: string;
 }
 
 export type WorkItemEvent =
@@ -26,9 +28,13 @@ export type WorkItemEvent =
       projectId: string;
       title: string;
       maxReworkLoops: number;
+      /** Branch the work starts from and merges into; default the project's. */
+      baseBranch?: string;
     })
   | (Base & { type: 'specifying_started' })
   | (Base & { type: 'spec_drafted'; specId: string; version: number })
+  /** The spec agent needs answers first; the work item then blocks until someone replies. */
+  | (Base & { type: 'spec_questions_asked'; questions: string[] })
   | (Base & {
       type: 'gate_decided';
       decisionId: string;
@@ -48,6 +54,10 @@ export type WorkItemEvent =
   /** The implementer finished without changing anything and said why; a human decides. */
   | (Base & { type: 'task_declined'; taskId: string; reason: string })
   | (Base & { type: 'task_rework_started'; taskId: string })
+  /** The tester agent wrote acceptance tests from the spec, once per task, before seeing the diff. */
+  | (Base & { type: 'task_acceptance_tests_written'; taskId: string; runId: string; files: string[]; patch: string })
+  /** A build stopped without finishing (the factory was stopped); the task builds again. */
+  | (Base & { type: 'task_interrupted'; taskId: string; reason: string })
   | (Base & { type: 'task_retry_granted'; taskId: string; grantedBy: string; extraLoops: number; note?: string })
   | (Base & { type: 'task_merged'; taskId: string; sha: string })
   | (Base & { type: 'task_budget_exceeded'; taskId: string; spentUsd: number })
@@ -67,6 +77,7 @@ export const WORK_ITEM_EVENT_TYPES: ReadonlySet<WorkItemEventType> = new Set<Wor
   'work_item_received',
   'specifying_started',
   'spec_drafted',
+  'spec_questions_asked',
   'gate_decided',
   'tasks_planned',
   'task_started',
@@ -76,6 +87,8 @@ export const WORK_ITEM_EVENT_TYPES: ReadonlySet<WorkItemEventType> = new Set<Wor
   'task_verified',
   'task_declined',
   'task_rework_started',
+  'task_acceptance_tests_written',
+  'task_interrupted',
   'task_retry_granted',
   'task_merged',
   'task_budget_exceeded',

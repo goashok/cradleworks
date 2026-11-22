@@ -32,6 +32,8 @@ const baseConfig: ProjectConfig = {
   budgets: { perTaskUsd: 5, maxReworkLoops: 2 },
   specs: 'repo',
   concurrency: 1,
+  verify: { tester: true },
+  relatedRepos: [],
   network: { mode: 'none', allow: [] },
 };
 
@@ -146,7 +148,7 @@ describe('Verify station', () => {
     const wi = (await o.getWorkItem(workItemId))!;
     const task = wi.tasks[0]!;
     expect(task.reworkLoops).toBe(1);
-    // Every run clones into a folder of its own (Docker Desktop can't remount a recreated one).
+    // Every run clones into a folder of its own (some sandboxes can't remount a recreated one).
     const clonedAt: string[] = [];
     for (const run of wi.runs) for (const e of await store.readStream(run.id)) if (e.type === 'checkout_cloned') clonedAt.push((e.payload as { path: string }).path);
     expect(clonedAt).toHaveLength(4);

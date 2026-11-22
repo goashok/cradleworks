@@ -75,8 +75,9 @@ export class LocalGitSourceControl implements SourceControl {
     return { sha };
   }
 
-  async push(copy: WorkingCopy, branch: string): Promise<void> {
-    await this.#git(['push', '--quiet', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], 'push', copy.path);
+  async push(copy: WorkingCopy, branch: string, options: { replace?: boolean } = {}): Promise<void> {
+    const plus = options.replace ? '+' : '';
+    await this.#git(['push', '--quiet', 'origin', `${plus}refs/heads/${branch}:refs/heads/${branch}`], 'push', copy.path);
   }
 
   async openPR(input: OpenPullRequestInput): Promise<PullRequestRef> {

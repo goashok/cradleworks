@@ -90,13 +90,14 @@ hello-node/
 ```console
 $ factory validate
 .: project hello-node, 1 rule file(s), image cradleworks/hello-node-dev:1
-  note: adapter "github-issues" is not built yet (arrives in M3 (tracker adapter)); submit does not need it
+  note: no tracker: submit works, factory watch does not
 ok
 ```
 
 `validate` reads `.factory/factory.yaml`, checks every key, confirms the rule files and the image
 exist, and runs nothing. A mistake in the YAML is reported with its line number. The note is
-expected: issue intake belongs to a later milestone.
+expected. This example lives on your disk, not on GitHub, so it can't take issues. See
+[From an issue to merged PRs](guides/issues.md) once your project is on GitHub.
 
 ## 5. Submit the task
 
@@ -219,3 +220,4 @@ to keep experiments separate.
 - [How it works](how-it-works.md): what happened in those twenty seconds, and why it's built this way
 - [Add your own project](guides/add-a-project.md): your repo, your image, your rules, real GitHub PRs
 - [Write good tasks](guides/writing-tasks.md): get better results from the agent
+- [From an issue to merged PRs](guides/issues.md): let `factory watch` take GitHub issues from spec to merge

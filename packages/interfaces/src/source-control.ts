@@ -55,7 +55,11 @@ export interface SourceControl {
   createBranch(copy: WorkingCopy, name: string, from?: string): Promise<void>;
   /** Commits all staged and unstaged changes, or only `paths` when given. */
   commit(copy: WorkingCopy, message: string, options?: { author?: Identity; paths?: string[] }): Promise<CommitRef>;
-  push(copy: WorkingCopy, branch: string): Promise<void>;
+  /**
+   * Pushes the branch to the same name. With `replace`, an existing remote branch is
+   * overwritten; the core only asks for that on branches it created and has no PR for.
+   */
+  push(copy: WorkingCopy, branch: string, options?: { replace?: boolean }): Promise<void>;
   openPR(input: OpenPullRequestInput): Promise<PullRequestRef>;
   getPRStatus(pr: PullRequestRef): Promise<PullRequestStatus>;
   /** Refuses (AdapterError `conflict`) if the head moved past `expectedHeadSha`. */

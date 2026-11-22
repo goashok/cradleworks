@@ -25,7 +25,7 @@ effect in the milestone shown.
 | `sandbox` | `local-docker` (`process` for tests only) | ✅ | Where the agent runs. `process` isn't isolated, and the CLI warns if you use it. |
 | `runtime` | `cli-agent` | ✅ | How the agent is driven: a CLI agent, headless, inside the sandbox. |
 | `ci` | `github-actions`, `none` | ✅ | CI to wait on in the Verify station. `github-actions` needs `scm: github`. |
-| `tracker` | `github-issues` | ⏳ M3 | Where requests come from. |
+| `tracker` | `github-issues`, `none` | ✅ | Where `factory watch` takes requests from. `github-issues` needs `scm: github`. With `none`, only `factory submit` works. See [From an issue to merged PRs](../guides/issues.md). |
 
 ## `runtime` (required)
 
@@ -33,7 +33,7 @@ effect in the milestone shown.
 | --- | --- | --- | --- |
 | `agent` | string | ✅ | The agent to run. Today: `claude-code`. |
 | `model` | string | ✅ | The model id passed to the agent, e.g. `claude-sonnet-5-5`. |
-| `roles.<role>.agent` / `.model` | string | ✅ `implementer`, `reviewer` · ⏳ others | Override the agent or model for one role: `implementer` (Build), `reviewer` (Verify), and from M3 `specifier`, `planner`, `tester` and `reviewer`. |
+| `roles.<role>.agent` / `.model` | string | ✅ | Override the agent or model for one role: `specifier` (Specify), `planner` (Plan), `implementer` (Build), `tester` (acceptance tests in Verify), and `reviewer` (Verify, and the ai spec and plan checks). |
 
 ## `stack` (required)
 
@@ -54,7 +54,7 @@ the build and tests before finishing. The Verify station runs them again itself,
 | Key | Type | Default | Status | Meaning |
 | --- | --- | --- | --- | --- |
 | `rules` | glob or list of globs | `[.factory/rules/*.md]` | ✅ | Rule files every agent is told to read and follow. They're matched in the checkout and share a 256 KB budget, and any file over budget is dropped and listed in the log. Each pattern must match at least one file. |
-| `include` | path or list | `[.]` | ⏳ M3 | The parts of the repo the repo map will cover. Today it's checked to exist; the agent can read the whole checkout either way. |
+| `include` | path or list | `[.]` | ⏳ later | The parts of the repo the repo map will cover. Today it's checked to exist; the agent can read the whole checkout either way. |
 
 ## `gates` (required, defaults provided)
 
@@ -62,13 +62,15 @@ Each gate is `human`, `ai` or `skip`.
 
 | Key | Default | Status | Meaning |
 | --- | --- | --- | --- |
-| `spec_approval` | `human` | ⏳ M3 | Who approves the spec before code is written. |
-| `plan_check` | `ai` | ⏳ M3 | Who checks the task breakdown. |
+| `spec_approval` | `human` | ✅ | Who approves the spec before planning: `human` (`/approve` on the issue, or `factory approve <wi>`), `ai` (a checker agent) or `skip`. |
+| `plan_check` | `ai` | ✅ | Who checks the task breakdown, with the same choices. |
 | `change_approval` | `human` | ✅ | Who approves a PR that passed Verify: `human` (`factory approve`), `ai` (the reviewer's pass) or `skip`. |
 | `auto_merge` | `false` | ✅ | Squash-merge automatically once the change gate approves. |
 
-Hand-written tasks from `factory submit` record the spec and plan gates as skipped, because you
-wrote the spec. See [Verify, rework and approve](../guides/verify-and-approve.md).
+An `ai` spec or plan check that sends the same work item back twice turns into `human` for that
+work item. Hand-written tasks from `factory submit` record the spec and plan gates as skipped,
+because you wrote the spec. See [From an issue to merged PRs](../guides/issues.md#gates) and
+[Verify, rework and approve](../guides/verify-and-approve.md).
 
 ## `budgets` (required, defaults provided)
 
@@ -79,7 +81,8 @@ wrote the spec. See [Verify, rework and approve](../guides/verify-and-approve.md
 | `per_user_daily_usd` | number > 0 | none | ⏳ M4 | Daily spend cap per requester. |
 | `per_user_monthly_usd` | number > 0 | none | ⏳ M4 | Monthly spend cap per requester. |
 
-Each Build run also has a fixed 30-minute wall-clock limit.
+Each Build run also has a fixed 30-minute wall-clock limit, and each spec, plan, check and tester
+run a 15-minute one.
 
 ## `sandbox.network` (required, defaults provided)
 
@@ -95,8 +98,10 @@ Don't list them yourself.
 
 | Key | Values | Default | Status | Meaning |
 | --- | --- | --- | --- | --- |
-| `specs` | `repo`, `factory` | `repo` | ⏳ M3 | Where approved specs are kept: in the repo under `.factory/specs/`, or in the factory's store. |
-| `concurrency` | integer ≥ 1 | `2` | ⏳ M3 | How many tasks may build at once. Today `submit` builds one task at a time. |
+| `specs` | `repo`, `factory` | `repo` | ✅ | Where approved specs are kept. Every version is always in the factory's store. With `repo`, the approved one is also committed to `.factory/specs/` in the first task's PR. |
+| `concurrency` | integer ≥ 1 | `2` | ✅ | How many of a work item's tasks may build and verify at once, and how many work items `factory watch` moves at once. `submit` builds its one task. |
+| `verify.tester` | boolean | `true` | ✅ | For work from issues: a tester agent writes acceptance tests from the spec, and Verify runs them as the `acceptance` check. |
+| `related_repos` | list of paths | `[]` | ✅ | Other checkouts, as paths from this repo, that the planner may give tasks to. Each needs its own `.factory/factory.yaml` and the same `scm`. |
 
 ## Environment variables
 
@@ -141,6 +146,9 @@ gates:
   plan_check: ai
   change_approval: human
   auto_merge: false
+
+verify:
+  tester: true
 
 budgets:
   per_task_usd: 5

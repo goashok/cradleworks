@@ -6,3 +6,4 @@ export { ProcessSandbox } from './process-sandbox.ts';
 export { ScriptedAgentRuntime, type Script, type ScriptStep } from './scripted-agent-runtime.ts';
 export { InMemoryStateStore } from './in-memory-state-store.ts';
 export { FakeCI, type FakeRunSpec } from './fake-ci.ts';
+export { FakeTracker, type FakeTrackerOptions } from './fake-tracker.ts';

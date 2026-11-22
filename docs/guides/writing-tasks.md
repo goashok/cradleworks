@@ -1,6 +1,7 @@
 # Write good tasks
 
-A task file is the whole specification the agent gets. Until the Specify station arrives (M3),
+A task file is the whole specification the agent gets. (For work from GitHub issues, the Specify
+station writes the spec for you: see [From an issue to merged PRs](issues.md).) With `submit`,
 nobody asks follow-up questions: what you write is what gets built.
 
 ## The format
@@ -55,7 +56,7 @@ requirements the task didn't state but the codebase implied:
 If you know about such a trap, put it in the task. If it applies to every task, put it in a rule.
 
 **Keep it to one change.** One task gives one PR. If the description has "and also", consider two
-tasks. Splitting large work items automatically is the Plan station's job (M3).
+tasks, or file it as an issue and let the Plan station split it ([guide](issues.md)).
 
 **Say when "no change" is a valid answer.** Asked to "tidy up" code that was already as simple as
 it could safely be, an agent sensibly changed nothing and explained why. The factory records that

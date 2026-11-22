@@ -50,6 +50,8 @@ const fakes = {
     comment: notImplemented,
     setStatus: notImplemented,
     link: notImplemented,
+    canApprove: notImplemented,
+    listOpen: notImplemented,
   } satisfies Tracker,
   agentRuntime: {
     id: 'fake',

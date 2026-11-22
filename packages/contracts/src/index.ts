@@ -6,3 +6,4 @@ export { describeSandboxContract, type SandboxFixture } from './sandbox.contract
 export { describeAgentRuntimeContract, type AgentRuntimeFixture } from './agent-runtime.contract.ts';
 export { describeStateStoreContract, type StateStoreFixture } from './state-store.contract.ts';
 export { describeCIContract, type CIFixture } from './ci.contract.ts';
+export { describeTrackerContract, type TrackerFixture } from './tracker.contract.ts';

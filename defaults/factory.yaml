@@ -21,6 +21,11 @@ budgets:
 specs: repo
 concurrency: 2
 
+verify:
+  tester: true          # acceptance tests from the spec, for work items from issues
+
+related_repos: []       # other repos (paths from this one) the planner may give tasks to
+
 sandbox:
   network:
     mode: allowlist

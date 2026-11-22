@@ -8,6 +8,7 @@ import type { AgentRunRequest, SandboxHandle } from '@cradleworks/interfaces';
 import {
   describeAgentRuntimeContract,
   describeCIContract,
+  describeTrackerContract,
   describeSandboxContract,
   describeSourceControlContract,
   describeStateStoreContract,
@@ -15,6 +16,7 @@ import {
 import {
   createBareRepo,
   FakeCI,
+  FakeTracker,
   InMemoryStateStore,
   LocalGitSourceControl,
   localRepoRef,
@@ -120,4 +122,11 @@ describeCIContract('fake CI', async () => {
     artifact: { name: 'report.txt', containsText: 'all good' },
     cleanup: async () => undefined,
   };
+});
+
+describeTrackerContract('fake tracker', async () => {
+  const tracker = new FakeTracker();
+  const item = tracker.addItem({ project: 'acme/shop', title: 'Export orders', body: 'As CSV.', author: 'alex', labels: ['factory'] });
+  tracker.allowApprover('sam');
+  return { adapter: tracker, project: 'acme/shop', item, label: 'factory', approver: 'sam', stranger: 'mallory', missing: { id: 'acme/shop#999', url: '' }, watchSeconds: 2, cleanup: async () => {} };
 });

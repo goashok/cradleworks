@@ -60,6 +60,12 @@ export interface ProjectConfig {
   specs: 'repo' | 'factory';
   /** Tasks run at once for this project. */
   concurrency: number;
+  verify: {
+    /** Run the tester agent on work items that have a spec (from an issue). */
+    tester: boolean;
+  };
+  /** Other repositories, by local path from this one, that the planner may give tasks to. */
+  relatedRepos: string[];
   /** Sandbox network egress. */
   network: NetworkPolicy;
 }

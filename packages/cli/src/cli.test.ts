@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createBareRepo, git, ScriptedAgentRuntime } from '@cradleworks/contracts/fakes';
+import { createBareRepo, FakeTracker, git, ScriptedAgentRuntime, type ScriptStep } from '@cradleworks/contracts/fakes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { defaultRegistry, parseTaskFile, run, type Registry } from './index.ts';
 
@@ -14,11 +14,12 @@ stack: { image: unused, build: "true", test: "true" }
 let root: string;
 let checkout: string;
 let home: string;
+let bare: string;
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), 'cw-cli-'));
   home = join(root, 'home');
-  const bare = join(root, 'remote.git');
+  bare = join(root, 'remote.git');
   await createBareRepo(bare, {
     'README.md': '# Demo\n',
     '.factory/factory.yaml': FACTORY_YAML,
@@ -212,12 +213,14 @@ describe('factory validate', () => {
     expect(r.stderr).not.toContain('src/');
   });
 
-  it('names a planned adapter without failing', async () => {
+  it('checks that the tracker suits the source control', async () => {
     writeFileSync(join(checkout, '.factory/factory.yaml'), FACTORY_YAML.replace('tracker: none', 'tracker: github-issues').replace('ci: none', 'ci: github-actions'));
     const r = await factory(['validate']);
-    expect(r.code).toBe(0);
-    expect(r.stdout).toContain('"github-issues" is not built yet');
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('tracker "github-issues" does not track local-git repositories');
     expect(r.stdout).toContain('ci "github-actions" does not build local-git repositories');
+    writeFileSync(join(checkout, '.factory/factory.yaml'), FACTORY_YAML);
+    expect((await factory(['validate'])).stdout).toContain('no tracker: submit works, factory watch does not');
   });
 
   it('shows config errors with line numbers', async () => {
@@ -243,5 +246,87 @@ describe('parseTaskFile', () => {
   it('needs a heading first', () => {
     expect(() => parseTaskFile('Some text\n# Late heading\n', 't.md')).toThrow(/must start with a "# Title" heading/);
     expect(() => parseTaskFile('no heading at all', 't.md')).toThrow(/heading/);
+  });
+});
+
+describe('factory watch', () => {
+  const WATCH_YAML = FACTORY_YAML.replace('tracker: none', 'tracker: fake') + 'gates: { spec_approval: human, plan_check: ai, change_approval: ai, auto_merge: true }\n';
+  const json = (v: unknown): ScriptStep => ({ kind: 'message', text: `\`\`\`json\n${JSON.stringify(v)}\n\`\`\`` });
+
+  function watchRegistry(tracker: FakeTracker): Registry {
+    const base = registry();
+    return {
+      ...base,
+      tracker: { fake: { create: () => tracker, scm: ['local-git'] } },
+      runtime: {
+        scripted: () =>
+          new ScriptedAgentRuntime((req) => {
+            switch (req.profile.role) {
+              case 'specifier':
+                return [json({ title: 'Add a changelog', problem: 'No changelog.', acceptance_criteria: ['CHANGELOG.md exists'], out_of_scope: [], assumptions: [] })];
+              case 'planner':
+                return [json({ tasks: [{ key: 't1', title: 'Write the changelog', description: 'Create CHANGELOG.md.', size: 'small', depends_on: [], criteria: [1] }] })];
+              case 'tester':
+                return [{ kind: 'message', text: 'Done.' }, { kind: 'write', path: 'changelog.acceptance.sh', content: 'test -f CHANGELOG.md\n' }];
+              case 'reviewer':
+                return [req.input.startsWith('# Spec check') || req.input.startsWith('# Plan check') ? json({ verdict: 'approved', reasons: [] }) : json({ verdict: 'pass', risk: 'low', reasons: [] })];
+              default:
+                return [{ kind: 'message', text: 'Added it.' }, { kind: 'write', path: 'CHANGELOG.md', content: '# Changelog\n' }];
+            }
+          }),
+      },
+    };
+  }
+
+  it('takes an issue through the spec gate to a merged pull request', async () => {
+    writeFileSync(join(checkout, '.factory/factory.yaml'), WATCH_YAML);
+    const tracker = new FakeTracker();
+    const reg = watchRegistry(tracker);
+    const issue = tracker.addItem({ project: bare, title: 'Add a changelog', body: 'We need a changelog.', author: 'alex', labels: ['factory'] });
+    tracker.addItem({ project: bare, title: 'Not for the factory', body: '', author: 'alex' });
+
+    const first = await factory(['watch', '--once'], checkout, reg);
+    expect(first.code).toBe(0);
+    expect(first.stdout).toMatch(/#1 picked up as wi_\S+/);
+    expect(first.stdout).toContain('#1 spec v1: Add a changelog (1 acceptance criteria)');
+    expect(first.stdout).toContain('#1 awaiting_spec_approval, waiting for spec approval');
+    expect(first.stdout).not.toContain('#2');
+    const wiId = /picked up as (wi_\S+)/.exec(first.stdout)![1]!;
+
+    const detail = await factory(['status', wiId], checkout, reg);
+    expect(detail.stdout).toContain(`issue      ${issue.url}`);
+    expect(detail.stdout).toMatch(/Spec\n {2}spec_\S+ version 1, not approved yet/);
+
+    expect(await factory(['approve', wiId], checkout, reg)).toMatchObject({ code: 0, stdout: expect.stringContaining('Approved the spec v1 of') });
+    expect(tracker.factoryComments(issue).at(-1)).toContain('**Spec approved** by');
+
+    const second = await factory(['watch', '--once'], checkout, reg);
+    expect(second.stdout).toContain('#1 plan_check approved (ai)');
+    expect(second.stdout).toMatch(/#1 \[Write the changelog\] merged/);
+    expect(second.stdout).toContain('#1 merged');
+    expect((await git(['--git-dir', bare, 'show', 'main:CHANGELOG.md'])).stdout).toBe('# Changelog\n');
+    expect((await git(['--git-dir', bare, 'show', 'main:.factory/specs/issue-1-add-a-changelog.md'])).stdout).toContain('Approved by');
+
+    // A third pass has nothing to do.
+    const third = await factory(['watch', '--once'], checkout, reg);
+    expect(third.stdout.trim().split('\n')).toHaveLength(1);
+  });
+
+  it('cancels the work when the issue is closed', async () => {
+    writeFileSync(join(checkout, '.factory/factory.yaml'), WATCH_YAML);
+    const tracker = new FakeTracker();
+    const reg = watchRegistry(tracker);
+    const issue = tracker.addItem({ project: bare, title: 'Add a changelog', body: 'Please.', author: 'alex', labels: ['factory'] });
+    await factory(['watch', '--once'], checkout, reg);
+    tracker.close(issue);
+    expect((await factory(['watch', '--once'], checkout, reg)).stdout).toContain('#1 cancelled: the issue was closed');
+  });
+
+  it('needs a tracker, and refuses a second watch', async () => {
+    expect(await factory(['watch', '--once'])).toMatchObject({ code: 2, stderr: expect.stringMatching(/factory watch needs a tracker/) });
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'watch.pid'), `${process.ppid}\n`);
+    writeFileSync(join(checkout, '.factory/factory.yaml'), WATCH_YAML);
+    expect(await factory(['watch', '--once'], checkout, watchRegistry(new FakeTracker()))).toMatchObject({ code: 2, stderr: expect.stringMatching(/another factory watch is running/) });
   });
 });

@@ -319,3 +319,38 @@ describe('event codec', () => {
     expect(() => fromStoredEvent(bad)).toThrow(/unknown event type/);
   });
 });
+
+describe('M3: questions, repos, acceptance tests, interruptions', () => {
+  it('asks one round of questions, blocks, and redrafts after the answer', () => {
+    let wi = replay([received(), ev({ type: 'specifying_started' }), ev({ type: 'spec_questions_asked', questions: ['CSV or JSON?'] })])!;
+    expect(wi).toMatchObject({ state: 'specifying', specQuestions: ['CSV or JSON?'] });
+    wi = applyEvent(wi, ev({ type: 'work_item_blocked', reason: 'waiting for answers' }));
+    expect(() => applyEvent(wi, ev({ type: 'spec_drafted', specId: 'spec_1', version: 1 }))).toThrow(IllegalTransitionError);
+    wi = applyEvent(wi, ev({ type: 'work_item_unblocked' }));
+    expect(() => applyEvent(wi, ev({ type: 'spec_questions_asked', questions: ['Again?'] }))).toThrow(/already asked/);
+    expect(applyEvent(wi, ev({ type: 'spec_drafted', specId: 'spec_1', version: 1 })).state).toBe('awaiting_spec_approval');
+  });
+
+  it('keeps the base branch and each task repo', () => {
+    const events = planned();
+    (events[0] as Extract<WorkItemEvent, { type: 'work_item_received' }>).baseBranch = 'release/2';
+    (events[4] as Extract<WorkItemEvent, { type: 'tasks_planned' }>).tasks[1]!.repo = 'client';
+    const wi = replay(events)!;
+    expect(wi.baseBranch).toBe('release/2');
+    expect(wi.tasks.map((t) => t.repo)).toEqual([undefined, 'client']);
+  });
+
+  it('records acceptance tests once, while verifying', () => {
+    const tests = ev({ type: 'task_acceptance_tests_written', taskId: 't1', runId: 'run_1', files: ['test/a.test.ts'], patch: 'diff' });
+    const verifying = replay([...planned(), ev({ type: 'task_started', taskId: 't1', branch: 'b' }), ev({ type: 'task_built', taskId: 't1' })])!;
+    const wi = applyEvent(verifying, tests);
+    expect(wi.tasks[0]!.acceptanceTests).toEqual({ runId: 'run_1', files: ['test/a.test.ts'], patch: 'diff' });
+    expect(() => applyEvent(wi, tests)).toThrow(/already has acceptance tests/);
+  });
+
+  it('sends an interrupted build back to build again, without using a rework loop', () => {
+    const wi = replay([...planned(), ev({ type: 'task_started', taskId: 't1', branch: 'b' }), ev({ type: 'task_interrupted', taskId: 't1', reason: 'factory stopped' })])!;
+    expect(wi.tasks[0]).toMatchObject({ state: 'rework', reworkLoops: 0, lastReason: 'factory stopped' });
+    expect(applyEvent(wi, ev({ type: 'task_rework_started', taskId: 't1' })).tasks[0]!.state).toBe('building');
+  });
+});

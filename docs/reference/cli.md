@@ -1,6 +1,7 @@
 # CLI reference
 
 ```text
+factory watch [<dir>...] [--once] [--interval <seconds>] [--label <name>]
 factory submit <task.md> [--base <branch>] [--build-only]
 factory status [<id>]
 factory approve <id> [--merge] [--reason <text>]
@@ -14,7 +15,8 @@ factory log <run-id|work-item-id> [--full] [--json]
 factory help
 ```
 
-`<id>` is a task id (`task_…`) or a work item id (`wi_…`, which stands for its only task).
+`<id>` is a task id (`task_…`) or a work item id (`wi_…`). A work item id stands for its only
+task, or for the work item itself at the spec and plan gates and when it's blocked.
 
 Run every command except `status`, `log` and `cancel` inside a repository that has
 `.factory/factory.yaml`, in its root or any folder below it. `status`, `log` and `cancel` work
@@ -31,9 +33,34 @@ alias factory="node /path/to/cradleworks/packages/cli/src/main.ts"
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success. |
+| `0` | Success. For `watch`, it stopped when asked, or `--once` finished its pass. |
 | `1` | The task didn't reach the change gate: the build failed, or the task escalated (declined, out of rework attempts, or Verify couldn't decide). |
 | `2` | Bad usage or setup: unknown command, missing file, invalid `factory.yaml`, unknown adapter, no `origin` remote, or a problem found by `validate`. |
+
+## `factory watch [<dir>...]`
+
+Takes GitHub issues labelled `factory` from spec to merged pull requests. See
+[From an issue to merged PRs](../guides/issues.md) for the whole flow.
+
+Each pass lists the open issues with the label, records new ones as work items, picks up what
+people did on the PRs (like `sync`), and moves every open work item as far as it can go: Specify,
+the spec gate, Plan, the plan check, then the tasks, in parallel up to `concurrency`. It prints a
+line for each step, and one when a work item starts waiting on a person.
+
+| Option | Meaning |
+| --- | --- |
+| `<dir>...` | Project folders to watch. Default: the current one. |
+| `--once` | Make one pass and exit. |
+| `--interval <seconds>` | Time between passes. Default 60. |
+| `--label <name>` | The label that hands an issue to the factory. Default `factory`. |
+
+The project needs a tracker (`adapters.tracker: github-issues`). On start, `watch` closes runs that
+a previous stop cut off and builds again any build that was cut off. Only one `watch` may run
+per `$CRADLEWORKS_HOME`. A second one exits with code 2. The first Ctrl-C finishes the steps in
+progress and the second stops at once.
+
+A closed issue cancels its work item. An issue whose label was removed is left alone until the
+label is back.
 
 ## `factory submit <task.md>`
 
@@ -62,7 +89,9 @@ The branch is always `factory/task-<8 chars>`.
 
 ## `factory approve <id>`
 
-Passes a `ready` task through the change gate as you.
+Passes a `ready` task through the change gate as you. Given a work item waiting at the spec or
+plan gate, it approves the spec or plan instead, the same as `/approve` on the issue, and
+`factory watch` carries on from there.
 
 | Option | Meaning |
 | --- | --- |
@@ -74,6 +103,9 @@ Passes a `ready` task through the change gate as you.
 Sends a `ready` task back. The reason reaches the agent as rework feedback, and the task carries
 on straight away (Build, Verify, the gate). Use `--no-run` to only record the rejection. A
 rejection counts against `max_rework_loops`.
+
+Given a work item at the spec or plan gate, it rejects the spec or plan. The next `watch` pass
+writes a new version with your reason.
 
 ## `factory retry <id>`
 
@@ -88,6 +120,8 @@ Gives an `escalated` task more attempts and carries on. A `failed` task (its bui
 ## `factory resume <id>`
 
 Carries on a task from where it stands: one that was interrupted, or one that `sync` sent back.
+Given a blocked work item, it unblocks it (the same as `/retry` on the issue), and `factory watch`
+carries on from there.
 
 ## `factory sync [<id>]`
 
@@ -105,7 +139,9 @@ Cancels the work item. Its pull requests stay open. `--reason` is stored.
 Without an id, it lists every work item, newest first, with its state, merged and total tasks,
 project and title.
 
-With an id, it shows the work item in detail: its tasks (state, PR, branch, reason, rework
+With an id, it shows the work item in detail. For work from an issue, that starts with the issue
+link, the base branch, why it's blocked, the questions asked, the spec version and whether it's
+approved, and the proposed plan. Then come its tasks (state, PR, branch, reason, rework
 attempts, the latest Verify evidence, and the next command to run), its runs (station, outcome,
 start time) and its gate decisions (gate, verdict, mode, who).
 
@@ -117,7 +153,8 @@ looks in `<dir>` (default: the current folder) and the folders above it.
 It reports:
 
 - YAML and schema errors, with line numbers
-- unknown adapter ids (adapters planned for a later milestone are listed as notes)
+- unknown adapter ids, a CI or tracker that doesn't suit the `scm`, and `related_repos` that
+  have no `.factory/factory.yaml`
 - `context.rules` patterns that match no file
 - `context.include` paths that don't exist
 - whether `stack.image` has been built on this machine (a note, not an error)

@@ -171,6 +171,29 @@ export function parseReview(text: string | undefined, model: string): ReviewResu
   return unreadable('no JSON object with a verdict was found');
 }
 
+/**
+ * The last JSON object in an agent's final message that `accept` takes: fenced blocks
+ * first, then the last balanced {…}. Undefined when there is none.
+ */
+export function extractJson<T>(text: string | undefined, accept: (value: Record<string, unknown>) => T | undefined): T | undefined {
+  if (!text) return undefined;
+  const candidates = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]!);
+  const braces = lastJsonObject(text);
+  if (braces) candidates.push(braces);
+  for (const raw of candidates.reverse()) {
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const accepted = accept(value as Record<string, unknown>);
+        if (accepted !== undefined) return accepted;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
 function lastJsonObject(text: string): string | undefined {
   const end = text.lastIndexOf('}');
   if (end < 0) return undefined;
@@ -207,12 +230,23 @@ function ciWord(ci: CiResult): string {
 // --- feedback and evidence -------------------------------------------------------------
 
 /** What the implementer is told when its change comes back. */
-export function reworkFeedback(evidence: Evidence | undefined, gateReason: string | undefined, attempt: number): string {
+export function reworkFeedback(evidence: Evidence | undefined, gateReason: string | undefined, attempt: number, acceptance?: { files: string[]; patch: string }): string {
   const parts = [`## Rework (attempt ${attempt})`, '', 'Your earlier change on this branch was sent back. The branch already has those commits; change what is needed to address every point below, then run the build and tests again.'];
   if (gateReason) parts.push('', '### From the reviewer at the change gate', gateReason);
   if (evidence) {
     for (const c of evidence.checks.filter((c) => c.outcome === 'failed' || c.outcome === 'timed_out')) {
       parts.push('', `### Check \`${c.name}\` ${c.outcome === 'timed_out' ? 'timed out' : `failed (exit ${c.exitCode ?? '?'})`}`, `Command: \`${c.command}\``, '```text', c.outputTail ?? '', '```');
+    }
+    if (acceptance && evidence.checks.some((c) => c.name === 'acceptance' && (c.outcome === 'failed' || c.outcome === 'timed_out'))) {
+      const patch = acceptance.patch.length > 12_000 ? `${acceptance.patch.slice(0, 12_000)}\n… (cut)` : acceptance.patch;
+      parts.push(
+        '',
+        '### The acceptance tests',
+        `A separate tester agent wrote these tests from the spec's acceptance criteria, without seeing your change (${acceptance.files.map((f) => `\`${f}\``).join(', ')}). They are not in your branch: make the behaviour they check work. If a test is plainly wrong about the spec, say so in your summary instead of working around it.`,
+        '```diff',
+        patch,
+        '```',
+      );
     }
     if (evidence.ci.state === 'failed') parts.push('', '### CI failed', '```text', evidence.ci.failureLogs ?? '(no log)', '```');
     if (evidence.review && evidence.review.verdict !== 'pass') parts.push('', '### Reviewer', ...evidence.review.reasons.map((r) => `- ${r}`));

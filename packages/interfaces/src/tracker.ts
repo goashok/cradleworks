@@ -2,6 +2,8 @@ import type { CommentRef, FactoryStatus, Identity, ItemRef, Timestamp } from './
 
 export interface TrackerComment {
   ref: CommentRef;
+  /** True for comments the factory itself posted. */
+  byFactory?: boolean;
   author: Identity;
   body: string;
   at: Timestamp;
@@ -42,8 +44,12 @@ export interface Tracker {
 
   /** Yields events until `signal` aborts. Webhook or polling is the adapter's choice. */
   watch(query: WatchQuery, signal: AbortSignal): AsyncIterable<TrackerEvent>;
+  /** Open items matching the query right now, oldest first. For polling and restarts. */
+  listOpen(query: WatchQuery): Promise<ItemRef[]>;
   getItem(item: ItemRef): Promise<TrackerItem>;
   comment(item: ItemRef, body: string): Promise<CommentRef>;
   setStatus(item: ItemRef, status: FactoryStatus): Promise<void>;
   link(item: ItemRef, target: TrackerLink): Promise<void>;
+  /** True when `handle` may decide gates on this item (for a code host: write access to the repo). */
+  canApprove(item: ItemRef, handle: string): Promise<boolean>;
 }

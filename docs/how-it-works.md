@@ -14,12 +14,12 @@ The full design is a pipeline of eight **stations**. People set direction and ap
 
 | # | Station | Who | In → out | Today |
 | --- | --- | --- | --- | --- |
-| 1 | Intake | adapter | issue or CLI request → work item | ✅ CLI (`factory submit`) · 🚧 GitHub Issues (M3) |
-| 2 | Specify | spec agent + requester | work item → spec with acceptance criteria | 🚧 M3. Today your task file is the spec. |
-| 3 | Approve spec | **human gate** | spec → approved spec | 🚧 M3. Recorded as skipped for hand-written tasks. |
-| 4 | Plan | planner agent | spec → tasks with dependencies | 🚧 M3. Today one task per submit. |
+| 1 | Intake | adapter | issue or CLI request → work item | ✅ CLI (`factory submit`) · ✅ GitHub Issues (`factory watch`, M3) |
+| 2 | Specify | spec agent + requester | work item → spec with acceptance criteria | ✅ **M3**: one round of questions at most. A task file is its own spec. |
+| 3 | Approve spec | **human gate** | spec → approved spec | ✅ **M3**: `/approve` on the issue. Recorded as skipped for hand-written tasks. |
+| 4 | Plan | planner agent | spec → tasks with dependencies | ✅ **M3**: up to 8 tasks, checked, then run in parallel in dependency order |
 | 5 | **Build** | implementer agent | task → branch + pull request | ✅ **M1** |
-| 6 | **Verify** | checks + CI + reviewer agent | PR → evidence, or back to Build | ✅ **M2** (a separate tester agent is M3) |
+| 6 | **Verify** | checks + CI + reviewer agent + tester agent | PR → evidence, or back to Build | ✅ **M2** · tester (M3) |
 | 7 | **Approve change** | **human gate** | PR + evidence → approved PR | ✅ **M2** |
 | 8 | Merge and learn | adapter + learning loop | approved PR → merged; failures → rules | ✅ merge (M2) · 🚧 learning (M5) |
 
@@ -27,8 +27,10 @@ The first version (milestone M1, the "walking skeleton") builds the spine all ei
 on: the state machine, the event log, the adapters, the sandbox and the CLI. It also builds one
 complete station, **Build**, which is the one that writes the code. M2 added **Verify**, the
 rework loop and the **change gate**, so a task now goes from the task file to a merged commit
-([guide](guides/verify-and-approve.md)). Each milestone adds stations without changing what's
-already there. See the [roadmap](roadmap.md).
+([guide](guides/verify-and-approve.md)). M3 added the front of the line. An issue becomes a
+spec, a plan and several tasks that run in parallel and merge in order
+([guide](guides/issues.md)). Each milestone adds stations without changing what's already
+there. See the [roadmap](roadmap.md).
 
 ## The things you'll see in the output
 
@@ -41,9 +43,9 @@ work item  wi_…     one request ("Add a farewell function"); has tasks
 - A **work item** is one request from one person. It moves through states such as
   `received → specifying → … → in_progress → awaiting_change_approval → merged`, or ends `failed`
   or `cancelled`.
-- A **task** is one change with **one PR**. Large work items will be planned into several tasks
-  with dependencies (M3). A hand-written task submitted with `factory submit` is a work item with
-  exactly one task.
+- A **task** is one change with **one PR**. A work item from an issue is planned into one or more
+  tasks with dependencies. A task starts once the tasks it depends on have merged. A hand-written
+  task submitted with `factory submit` is a work item with exactly one task.
 - A **run** is one execution of a station. A task that's reworked twice has five runs: build,
   verify, build, verify, build… A retry is a new run, so nothing is overwritten.
 - A task moves `queued → building → verifying → ready → approved → merged`. Verify can send it
@@ -110,10 +112,10 @@ The core (`packages/core`) talks to the outside world only through interfaces
 | `AgentRuntime` | start an agent, stream normalised events, stop, report usage | `cli-agent` (Claude Code) | OpenAI Codex CLI (M6), Agent SDK |
 | `StateStore` | append events, query, snapshot | SQLite | Postgres |
 | `CI` | find runs for a commit, status, logs, artifacts | GitHub Actions | |
-| `Tracker` | watch issues, comment, set status | interface only | GitHub Issues (M3) |
+| `Tracker` | list and watch issues, comment, set status, check who may approve | `github-issues` | GitLab, Jira, Linear |
 | `Notifier` | tell a person a gate is waiting | interface only | GitHub comments, Slack |
 | `ModelProvider` | direct model calls for the core's own agents | interface only | direct API, Bedrock, gateways |
-| `SpecStore` | where approved specs live | interface only | repo (`.factory/specs/`) or factory store |
+| `SpecStore` | every version of every spec | factory store (approved specs also go to `.factory/specs/` in the PR) | |
 
 Every agent runtime maps its output onto the same five normalised events: `tool_call`,
 `file_change`, `message`, `usage` and `done`. That's why the log and the cost accounting look the

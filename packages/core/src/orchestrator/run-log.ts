@@ -22,7 +22,12 @@ export type RunLogEntry =
   | ({ type: 'ci_checked' } & CiResult)
   | { type: 'evidence'; verdict: VerifyVerdict; reason: string; sha: string }
   | { type: 'evidence_posted'; url: string }
-  | { type: 'evidence_not_posted'; error: string };
+  | { type: 'evidence_not_posted'; error: string }
+  | { type: 'spec_written'; path: string }
+  | { type: 'spec_answer'; kind: 'questions' | 'spec' | 'unreadable' }
+  | { type: 'plan_checked'; attempt: number; problems: string[] }
+  | { type: 'check_decided'; what: 'spec' | 'plan'; verdict: 'approved' | 'rejected'; reasons: string[] }
+  | { type: 'acceptance_tests'; files: string[]; note?: string };
 
 export class RunLog {
   readonly runId: string;

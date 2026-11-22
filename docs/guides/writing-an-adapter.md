@@ -27,7 +27,8 @@ up in `packages/core`.
 | `AgentRuntime` | `requiredHosts`, `start` → an `AgentRun` with `events`, `stop`, `getUsage` | `describeAgentRuntimeContract` |
 | `StateStore` | append events, query, snapshot | `describeStateStoreContract` |
 | `CI` | `findRuns`, `getRunStatus`, `getLogs`, `getArtifacts`, `downloadArtifact`, `trigger` | `describeCIContract` |
-| `Tracker`, `Notifier`, `ModelProvider`, `SpecStore` | defined; used from M3 on | coming with their first adapter |
+| `Tracker` | `listOpen`, `watch`, `getItem`, `comment`, `setStatus`, `link`, `canApprove` | `describeTrackerContract` |
+| `Notifier`, `ModelProvider` | defined, not used yet | none yet |
 
 Read the interface file itself for the exact types and guarantees. Each one is short and
 documented, for example `packages/interfaces/src/sandbox.ts`.

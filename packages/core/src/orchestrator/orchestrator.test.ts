@@ -29,6 +29,8 @@ const config: ProjectConfig = {
   budgets: { perTaskUsd: 5, maxReworkLoops: 3 },
   specs: 'repo',
   concurrency: 1,
+  verify: { tester: true },
+  relatedRepos: [],
   network: { mode: 'none', allow: [] },
 };
 

@@ -109,6 +109,12 @@ export const FACTORY_YAML: Field = {
     },
     specs: { kind: 'enum', values: ['repo', 'factory'], required: true },
     concurrency: { kind: 'number', required: true, min: 1, integer: true },
+    verify: {
+      kind: 'object',
+      required: true,
+      fields: { tester: { kind: 'boolean', required: true } },
+    },
+    related_repos: { kind: 'stringList', required: true },
     sandbox: {
       kind: 'object',
       required: true,

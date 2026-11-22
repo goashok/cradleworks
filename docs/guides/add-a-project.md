@@ -24,7 +24,7 @@ project: my-service              # a name for logs and status
 adapters:
   scm: github                    # or local-git to try it without GitHub
   ci: github-actions             # Verify waits for workflow runs on each pushed commit
-  tracker: github-issues         # reserved for issue intake (M3)
+  tracker: github-issues         # for factory watch; none to use submit only
   sandbox: local-docker
   runtime: cli-agent
 

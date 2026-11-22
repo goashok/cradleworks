@@ -164,6 +164,8 @@ interface RawConfig {
   budgets: { per_task_usd: number; per_user_daily_usd?: number; per_user_monthly_usd?: number; max_rework_loops: number };
   specs: 'repo' | 'factory';
   concurrency: number;
+  verify: { tester: boolean };
+  related_repos: string | string[];
   sandbox: { network: { mode: 'none' | 'allowlist'; allow: string | string[] } };
 }
 
@@ -194,6 +196,8 @@ function toProjectConfig(raw: RawConfig): ProjectConfig {
     budgets,
     specs: raw.specs,
     concurrency: raw.concurrency,
+    verify: { tester: raw.verify.tester },
+    relatedRepos: list(raw.related_repos),
     network: { mode: raw.sandbox.network.mode, allow: list(raw.sandbox.network.allow) },
   };
 }

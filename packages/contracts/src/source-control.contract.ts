@@ -69,6 +69,19 @@ export function describeSourceControlContract(
       await expectAdapterError(f.adapter.clone(f.repo, dir), 'invalid_input');
     });
 
+    it('replaces a pushed branch only when asked', async () => {
+      const first = await pushedBranch('first.txt');
+      const copy = await f.adapter.clone(f.repo, cloneDir());
+      await f.adapter.createBranch(copy, first.branch);
+      writeFileSync(join(copy.path, 'second.txt'), 'second\n');
+      await f.adapter.commit(copy, 'Add second.txt');
+      await expect(f.adapter.push(copy, first.branch)).rejects.toThrow();
+      await f.adapter.push(copy, first.branch, { replace: true });
+      const check = await f.adapter.clone(f.repo, cloneDir(), { ref: first.branch });
+      expect(existsSync(join(check.path, 'second.txt'))).toBe(true);
+      expect(existsSync(join(check.path, 'first.txt'))).toBe(false);
+    });
+
     it('refuses to create a branch that exists', async () => {
       const copy = await f.adapter.clone(f.repo, cloneDir());
       const branch = unique('cw-dup');

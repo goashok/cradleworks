@@ -1,13 +1,13 @@
 // `factory` command. `run` takes everything it touches as arguments so tests can drive it.
 
 import { execFile } from 'node:child_process';
-import { existsSync, globSync, readFileSync } from 'node:fs';
+import { existsSync, globSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { ConfigError, loadProjectConfig } from '@cradleworks/config';
-import { Orchestrator, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem } from '@cradleworks/core';
-import type { AgentRuntime, CI } from '@cradleworks/interfaces';
+import { Orchestrator, TERMINAL_WORK_ITEM_STATES, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem, type WorkProgress } from '@cradleworks/core';
+import type { AgentRuntime, CI, ItemRef, Tracker } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
@@ -19,6 +19,8 @@ export interface CliEnv {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   registry?: Registry;
+  /** Aborted to stop `factory watch` after the steps it is in. */
+  signal?: AbortSignal;
 }
 
 /** Exit codes: 0 ok, 1 the work failed, 2 bad usage or setup. */
@@ -46,6 +48,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await cancel(rest, io);
       case 'sync':
         return await sync(rest, io);
+      case 'watch':
+        return await watch(rest, io);
       case undefined:
       case 'help':
       case '--help':
@@ -70,17 +74,22 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
 }
 
 const USAGE = `Usage:
+  factory watch [<dir>...] [--once] [--interval <seconds>] [--label <name>]
+                                    Take issues labelled "factory" (by default) through spec, plan,
+                                    build, verify and merge; every 60 s until stopped, or once
   factory submit <task.md> [--base <branch>] [--build-only]
                                     Build a hand-written task, open a pull request, verify it,
                                     rework it until it passes, and stop at the change gate
   factory status [<id>]             List work items, or show one with its evidence
   factory approve <id> [--merge] [--reason <text>]
-                                    Pass a ready task through the change gate (and merge it)
+                                    Pass a ready task through the change gate (and merge it),
+                                    or a work item's spec or plan through its gate
   factory reject <id> --reason <text> [--no-run]
-                                    Send a ready task back; the reason becomes rework feedback
+                                    Send a ready task back; the reason becomes rework feedback.
+                                    On a work item at the spec or plan gate: write a new version
   factory retry <id> [--loops <n>] [--note <text>] [--no-run]
                                     Give an escalated task more attempts
-  factory resume <id>               Continue a task from where it stands
+  factory resume <id>               Continue a task from where it stands, or unblock a work item
   factory sync [<id>]               Pick up approvals, requested changes and merges from pull requests
   factory cancel <id> [--reason <text>]
                                     Cancel a work item
@@ -120,11 +129,15 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   adapter('sandbox', config.adapters.sandbox, Object.keys(registry.sandbox));
   adapter('runtime', config.adapters.runtime, Object.keys(registry.runtime));
   adapter('ci', config.adapters.ci, [...Object.keys(registry.ci), 'none']);
-  adapter('tracker', config.adapters.tracker, undefined);
+  adapter('tracker', config.adapters.tracker, [...Object.keys(registry.tracker), 'none']);
   const ciEntry = registry.ci[config.adapters.ci];
   if (ciEntry && !ciEntry.scm.includes(config.adapters.scm)) notes.push(`ci "${config.adapters.ci}" does not build ${config.adapters.scm} repositories; Verify will run without CI`);
-  for (const id of [config.adapters.tracker]) {
-    if (PLANNED_ADAPTERS[id]) notes.push(`adapter "${id}" is not built yet (arrives in ${PLANNED_ADAPTERS[id]}); submit does not need it`);
+  const trackerEntry = registry.tracker[config.adapters.tracker];
+  if (trackerEntry && !trackerEntry.scm.includes(config.adapters.scm)) problems.push(`tracker "${config.adapters.tracker}" does not track ${config.adapters.scm} repositories`);
+  if (config.adapters.tracker === 'none') notes.push('no tracker: submit works, factory watch does not');
+  for (const path of config.relatedRepos) {
+    const root = findProjectRoot(resolve(repoRoot, path));
+    if (!root || root === repoRoot) problems.push(`related_repos: ${path} has no .factory/factory.yaml`);
   }
 
   for (const pattern of config.context.rules) {
@@ -267,6 +280,8 @@ export function parseTaskFile(text: string, name: string): { title: string; body
 
 async function approve(args: string[], io: CliEnv): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { merge: { type: 'boolean' }, reason: { type: 'string' } } });
+  const atGate = await decideWorkItemGate(positionals, io, 'approved', values.reason);
+  if (atGate !== undefined) return atGate;
   return withTask(positionals, 'approve', io, async (ctx, wi, task) => {
     const by = await requester(ctx.repoRoot, io);
     const result = await ctx.orchestrator.approveTask(ctx.project, wi.id, task.id, { by, ...(values.reason ? { reason: values.reason } : {}), merge: values.merge ?? false });
@@ -278,6 +293,8 @@ async function approve(args: string[], io: CliEnv): Promise<number> {
 async function reject(args: string[], io: CliEnv): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { reason: { type: 'string' }, 'no-run': { type: 'boolean' } } });
   if (!values.reason?.trim()) throw new UsageError('reject needs --reason "<what to change>"');
+  const atGate = await decideWorkItemGate(positionals, io, 'rejected', values.reason);
+  if (atGate !== undefined) return atGate;
   return withTask(positionals, 'reject', io, async (ctx, wi, task) => {
     await ctx.orchestrator.rejectTask(wi.id, task.id, { by: await requester(ctx.repoRoot, io), reason: values.reason! });
     io.stdout(`Sent ${task.id} back for rework\n`);
@@ -298,7 +315,38 @@ async function retry(args: string[], io: CliEnv): Promise<number> {
 
 async function resume(args: string[], io: CliEnv): Promise<number> {
   const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  const [id] = positionals;
+  if (id?.startsWith('wi_') && positionals.length === 1) {
+    const ctx = await openProject(io);
+    try {
+      const wi = await ctx.repository.load(id);
+      if (wi?.state === 'blocked') {
+        await ctx.orchestrator.resumeWorkItem(id, await requester(ctx.repoRoot, io));
+        io.stdout(`Unblocked ${id}; factory watch carries on from ${wi.blockedFrom ?? 'where it stopped'}\n`);
+        return 0;
+      }
+    } finally {
+      await ctx.close();
+    }
+  }
   return withTask(positionals, 'resume', io, (ctx, wi, task) => continueTask(ctx, io, wi.id, task.id));
+}
+
+/** `approve`/`reject` on a work item waiting at the spec or plan gate; undefined when it isn't. */
+async function decideWorkItemGate(positionals: string[], io: CliEnv, verdict: 'approved' | 'rejected', reason: string | undefined): Promise<number | undefined> {
+  const [id] = positionals;
+  if (!id?.startsWith('wi_') || positionals.length !== 1) return undefined;
+  const ctx = await openProject(io);
+  try {
+    const wi = await ctx.repository.load(id);
+    if (!wi || !(wi.state === 'awaiting_spec_approval' || (wi.state === 'planning' && wi.proposedTasks.length > 0))) return undefined;
+    const gate = await ctx.orchestrator.decideWorkItemGate(id, { by: await requester(ctx.repoRoot, io), verdict, ...(reason ? { reason } : {}) });
+    const what = gate === 'spec_approval' ? `spec v${wi.spec?.version}` : 'plan';
+    io.stdout(verdict === 'approved' ? `Approved the ${what} of ${id}; factory watch carries on from here\n` : `Rejected the ${what} of ${id}; factory watch writes a new version\n`);
+    return 0;
+  } finally {
+    await ctx.close();
+  }
 }
 
 async function cancel(args: string[], io: CliEnv): Promise<number> {
@@ -471,13 +519,29 @@ function describe(wi: WorkItem): string {
     `  title      ${wi.title}`,
     `  project    ${wi.projectId}`,
     `  requester  ${wi.requester}`,
+    ...(wi.source.id.startsWith('submitted:') ? [] : [`  issue      ${wi.source.url}`]),
+    ...(wi.baseBranch ? [`  base       ${wi.baseBranch}`] : []),
     `  created    ${wi.createdAt}`,
     `  updated    ${wi.updatedAt}`,
-    '',
-    'Tasks',
   ];
+  if (wi.state === 'blocked') lines.push(`  blocked    ${wi.blockedReason ?? ''}`, `  next       answer on the issue, reply /retry there, or factory resume ${wi.id}`);
+  if (wi.specQuestions) {
+    lines.push('', 'Questions asked');
+    wi.specQuestions.forEach((q, i) => lines.push(`  ${i + 1}. ${q}`));
+  }
+  if (wi.spec) {
+    lines.push('', 'Spec', `  ${wi.spec.specId} version ${wi.spec.version}, ${wi.spec.approved ? 'approved' : 'not approved yet'}`);
+    if (wi.state === 'awaiting_spec_approval') lines.push(`  next  /approve or /reject <reason> on the issue, or factory approve|reject ${wi.id}`);
+  }
+  if (wi.proposedTasks.length > 0) {
+    lines.push('', 'Proposed plan');
+    for (const t of wi.proposedTasks) lines.push(`  ${t.id}  ${t.size}  ${t.title}${t.repo ? `  (in ${t.repo})` : ''}${t.dependsOn.length ? `  after ${t.dependsOn.join(', ')}` : ''}`);
+    lines.push(`  next  /approve or /reject <reason> on the issue, or factory approve|reject ${wi.id}`);
+  }
+  lines.push('', 'Tasks');
   for (const t of wi.tasks) {
-    lines.push(`  ${t.id}  ${t.state}  ${t.title}`);
+    lines.push(`  ${t.id}  ${t.state}  ${t.title}${t.repo ? `  (in ${t.repo})` : ''}`);
+    if (t.dependsOn.length && t.state === 'queued') lines.push(`    after   ${t.dependsOn.join(', ')}`);
     if (t.pr) lines.push(`    pr      ${t.pr.url}`);
     if (t.branch) lines.push(`    branch  ${t.branch}`);
     if (t.lastReason && t.lastReason !== t.evidence?.reason) lines.push(`    reason  ${t.lastReason}`);
@@ -503,12 +567,187 @@ function nextStep(t: Task): string | undefined {
     case 'escalated':
       return `factory retry ${t.id} [--note "..."]`;
     case 'queued':
+      return t.dependsOn.length ? undefined : `factory resume ${t.id}`;
     case 'rework':
     case 'verifying':
       return `factory resume ${t.id}`;
     default:
       return undefined;
   }
+}
+
+// --- watch --------------------------------------------------------------------
+
+/**
+ * Polls each project's tracker, takes in newly labelled items and moves every open work
+ * item from an issue as far as it can go. State is all in the event log, so a restart
+ * carries on: runs cut off by the stop are closed, and cut-off builds build again.
+ */
+async function watch(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { once: { type: 'boolean' }, interval: { type: 'string' }, label: { type: 'string' } },
+  });
+  const interval = values.interval === undefined ? 60 : Number(values.interval);
+  if (!Number.isFinite(interval) || interval < 1) throw new UsageError('--interval must be a number of seconds, at least 1');
+  const label = values.label?.trim() || 'factory';
+  const home = factoryHome(io);
+  const dirs = positionals.length ? positionals.map((p) => resolve(io.cwd, p)) : [io.cwd];
+
+  const contexts: ProjectContext[] = [];
+  const release = takeWatchLock(home);
+  try {
+    for (const dir of dirs) {
+      const ctx = await openProject(io, dir);
+      contexts.push(ctx);
+      if (!ctx.tracker) {
+        throw new UsageError(
+          `${ctx.project.config.project}: factory watch needs a tracker; set adapters.tracker in .factory/factory.yaml (${Object.keys(io.registry?.tracker ?? defaultRegistry().tracker).join(', ')})`,
+        );
+      }
+    }
+    for (const ctx of contexts) {
+      for (const wi of await openFromTracker(ctx)) {
+        for (const note of await ctx.orchestrator.recoverWorkItem(wi.id)) io.stdout(`${labelOf(wi)} recovered: ${note}\n`);
+      }
+      io.stdout(`Watching ${ctx.project.repo.id} for open issues labelled "${label}"${values.once ? ' (once)' : `, every ${interval}s`}\n`);
+    }
+    const waiting = new Map<string, string>();
+    for (;;) {
+      for (const ctx of contexts) {
+        if (io.signal?.aborted) break;
+        await watchCycle(ctx, label, io, waiting);
+      }
+      if (values.once || io.signal?.aborted) break;
+      await sleep(interval * 1000, io.signal);
+      if (io.signal?.aborted) break;
+    }
+    return 0;
+  } finally {
+    for (const ctx of contexts) await ctx.close();
+    release();
+  }
+}
+
+async function watchCycle(ctx: ProjectContext, label: string, io: CliEnv, waiting: Map<string, string>): Promise<void> {
+  const tracker = ctx.tracker!;
+  const project = ctx.project;
+  let open: ItemRef[];
+  try {
+    open = await tracker.listOpen({ project: project.repo.id, labels: [label] });
+  } catch (error) {
+    io.stderr(`${project.repo.id}: cannot list issues: ${(error as Error).message}\n`);
+    return;
+  }
+  for (const ref of open) {
+    const { workItemId, created } = await ctx.orchestrator.receiveItem(project, ref);
+    if (created) io.stdout(`${shortLabel(ref.id)} picked up as ${workItemId}\n`);
+  }
+  const listed = new Set(open.map((r) => r.id));
+  const items = await openFromTracker(ctx);
+  const work: WorkItem[] = [];
+  for (const wi of items) {
+    if (listed.has(wi.source.id)) {
+      work.push(wi);
+      continue;
+    }
+    // Not listed: closed (cancel the work), or the label was taken off (paused).
+    const item = await tracker.getItem(wi.source).catch(() => undefined);
+    if (item?.state === 'closed') {
+      await ctx.orchestrator.cancelWorkItem(wi.id, 'the issue was closed');
+      io.stdout(`${labelOf(wi)} cancelled: the issue was closed\n`);
+    }
+  }
+  await pool(work, project.config.concurrency, async (wi) => {
+    const prefix = labelOf(wi);
+    try {
+      for (const note of await ctx.orchestrator.syncWorkItem(project, wi.id)) io.stdout(`${prefix} ${note}\n`);
+      const outcome = await ctx.orchestrator.runWorkItem(project, wi.id, (p) => printWorkProgress(io, prefix, p));
+      const now = outcome.waitingFor ? `${outcome.state}, waiting for ${outcome.waitingFor}` : outcome.state;
+      if (waiting.get(wi.id) !== now) io.stdout(`${prefix} ${now}\n`);
+      waiting.set(wi.id, now);
+    } catch (error) {
+      io.stderr(`${prefix} stopped on an error: ${(error as Error).message}\n`);
+    }
+  });
+}
+
+async function openFromTracker(ctx: ProjectContext): Promise<WorkItem[]> {
+  return (await ctx.orchestrator.listWorkItems(ctx.project.config.project)).filter((wi) => !wi.source.id.startsWith('submitted:') && !TERMINAL_WORK_ITEM_STATES.has(wi.state)).reverse();
+}
+
+function printWorkProgress(io: CliEnv, prefix: string, p: WorkProgress): void {
+  const say = (text: string) => io.stdout(`${prefix} ${text}\n`);
+  switch (p.kind) {
+    case 'questions':
+      return say(`the spec agent asked ${p.questions.length} question${p.questions.length > 1 ? 's' : ''} on the issue; waiting for an answer`);
+    case 'spec':
+      return say(`spec v${p.version}: ${p.title} (${p.criteria} acceptance criteria)`);
+    case 'decided':
+      return say(`${p.gate} ${p.verdict} (${p.mode}) by ${p.by}${p.verdict === 'rejected' ? `: ${p.reason}` : ''}`);
+    case 'planned':
+      say(`planned ${p.tasks.length} task${p.tasks.length > 1 ? 's' : ''}:`);
+      for (const t of p.tasks) io.stdout(`${prefix}   ${t.id}  ${t.title}${t.dependsOn.length ? `  (after ${t.dependsOn.join(', ')})` : ''}\n`);
+      return;
+    case 'blocked':
+      return say(`blocked: ${p.reason}`);
+    case 'unblocked':
+      return say(`unblocked by ${p.by}`);
+    case 'task':
+      return printProgress({ ...io, stdout: (text) => io.stdout(text.replace(/^(?=.)/gm, `${prefix} [${p.title}] `)) }, p.progress);
+    case 'task_stopped':
+      return say(`[${p.title}] ${p.outcome.state}${p.outcome.awaitingApproval ? ', ready for review' : ''}${p.outcome.pr ? `: ${p.outcome.pr.url}` : ''}${p.outcome.reason && p.outcome.state !== 'merged' ? ` (${p.outcome.reason})` : ''}`);
+    case 'task_error':
+      return say(`[${p.title}] error: ${p.error}`);
+    case 'done':
+      return;
+  }
+}
+
+function labelOf(wi: WorkItem): string {
+  return wi.source.id.includes('#') ? shortLabel(wi.source.id) : wi.id;
+}
+
+function shortLabel(sourceId: string): string {
+  return `#${sourceId.split('#').pop()}`;
+}
+
+/** One `factory watch` per factory home: two would run the same work twice. */
+function takeWatchLock(home: string): () => void {
+  mkdirSync(home, { recursive: true });
+  const path = join(home, 'watch.pid');
+  if (existsSync(path)) {
+    const pid = Number(readFileSync(path, 'utf8').trim());
+    if (Number.isInteger(pid) && pid !== process.pid && alive(pid)) throw new UsageError(`another factory watch is running (pid ${pid}); stop it first`);
+  }
+  writeFileSync(path, `${process.pid}\n`);
+  return () => rmSync(path, { force: true });
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>): Promise<void> {
+  const queue = [...items];
+  await Promise.all(
+    Array.from({ length: Math.min(size, queue.length) }, async () => {
+      for (let next = queue.shift(); next !== undefined; next = queue.shift()) await fn(next);
+    }),
+  );
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => (clearTimeout(timer), resolve()), { once: true });
+  });
 }
 
 // --- setup --------------------------------------------------------------------
@@ -519,12 +758,13 @@ interface ProjectContext {
   orchestrator: Orchestrator;
   store: SqliteStateStore;
   repository: WorkItemRepository;
+  tracker?: Tracker;
   close(): Promise<void>;
 }
 
-async function openProject(io: CliEnv): Promise<ProjectContext> {
-  const repoRoot = findProjectRoot(io.cwd);
-  if (!repoRoot) throw new UsageError(`no .factory/factory.yaml in ${io.cwd} or any folder above it`);
+async function openProject(io: CliEnv, dir: string = io.cwd): Promise<ProjectContext> {
+  const repoRoot = findProjectRoot(dir);
+  if (!repoRoot) throw new UsageError(`no .factory/factory.yaml in ${dir} or any folder above it`);
   const config = loadProjectConfig(repoRoot);
   const registry = io.registry ?? defaultRegistry();
   const home = factoryHome(io);
@@ -541,10 +781,29 @@ async function openProject(io: CliEnv): Promise<ProjectContext> {
   const makeSandbox = pick('sandbox', registry.sandbox, config.adapters.sandbox);
   const makeRuntime = pick('runtime', registry.runtime, config.adapters.runtime);
 
-  const remote = await gitOutput(['remote', 'get-url', 'origin'], repoRoot).catch(() => '');
-  if (!remote) throw new UsageError(`${repoRoot} has no "origin" remote`);
-  const repo = scmEntry.repoFromRemote(remote);
-  if (!repo) throw new UsageError(`origin ${remote} is not a ${config.adapters.scm} repository`);
+  const repoOf = async (root: string) => {
+    const remote = await gitOutput(['remote', 'get-url', 'origin'], root).catch(() => '');
+    if (!remote) throw new UsageError(`${root} has no "origin" remote`);
+    const repo = scmEntry.repoFromRemote(remote);
+    if (!repo) throw new UsageError(`origin ${remote} of ${root} is not a ${config.adapters.scm} repository`);
+    return repo;
+  };
+  const repo = await repoOf(repoRoot);
+
+  // Related repositories: other projects the planner may give tasks to, on the same source control.
+  const related: Record<string, Project> = {};
+  for (const path of config.relatedRepos) {
+    const root = findProjectRoot(resolve(repoRoot, path));
+    if (!root || root === repoRoot) throw new UsageError(`related_repos: ${path} has no .factory/factory.yaml`);
+    const relatedConfig = loadProjectConfig(root);
+    if (relatedConfig.adapters.scm !== config.adapters.scm) throw new UsageError(`related_repos: ${path} uses scm "${relatedConfig.adapters.scm}"; it must match "${config.adapters.scm}"`);
+    if (relatedConfig.project === config.project || related[relatedConfig.project]) throw new UsageError(`related_repos: project name "${relatedConfig.project}" is used twice`);
+    related[relatedConfig.project] = { repo: await repoOf(root), config: relatedConfig };
+  }
+
+  const trackerEntry = registry.tracker[config.adapters.tracker];
+  let tracker: Tracker | undefined;
+  if (trackerEntry && trackerEntry.scm.includes(config.adapters.scm)) tracker = trackerEntry.create();
 
   if (registry.testOnlySandboxes.has(config.adapters.sandbox)) {
     io.stderr(`warning: sandbox "${config.adapters.sandbox}" is for testing only and does not isolate the agent\n`);
@@ -568,9 +827,11 @@ async function openProject(io: CliEnv): Promise<ProjectContext> {
     sandbox,
     runtime,
     ...(ci ? { ci } : {}),
+    ...(tracker ? { tracker } : {}),
     workRoot: join(home, 'work'),
   });
-  return { repoRoot, project: { repo, config }, orchestrator, store, repository: new WorkItemRepository(store), close: () => store.close() };
+  const project: Project = { repo, config, ...(Object.keys(related).length ? { related } : {}) };
+  return { repoRoot, project, orchestrator, store, repository: new WorkItemRepository(store), ...(tracker ? { tracker } : {}), close: () => store.close() };
 }
 
 export function findProjectRoot(from: string): string | undefined {

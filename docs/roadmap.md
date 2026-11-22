@@ -1,14 +1,14 @@
 # Roadmap
 
-Each milestone ends with something that runs. M0, M1 and M2 are done.
+Each milestone ends with something that runs. M0 to M3 are built.
 
 | | Milestone | Delivers | Exit check | Status |
 | --- | --- | --- | --- | --- |
 | M0 | Reference projects and eval suite | Two reference projects with planted difficulties; 30 tasks with hidden tests, reference solutions and a grader | Every task proven solvable; reviewed by someone outside the design team | ✅ Built and verified; outside review pending |
 | M1 | Walking skeleton | State machine, event log, SQLite store, config, contract suites, GitHub adapter, Docker sandbox, Claude Code runtime, Build station, CLI | `factory submit` opens a PR on a reference project, logged and replayable | ✅ Done |
 | M2 | Verify and gates | Verify station (build, tests, CI, reviewer agent), evidence bundle on the PR, the change gate, the rework loop | A task loops through rework and reaches the change gate with evidence | ✅ Done |
-| M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | Next |
-| M4 | Budgets and security | Per-user caps, a hard-deny list, scoped tokens, an evaluation of microVM sandboxes | Budget-stop and deny-list tests pass | |
+| M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | ✅ Built; exit check on the reference projects pending |
+| M4 | Budgets and security | Per-user caps, a hard-deny list, scoped tokens, an evaluation of microVM sandboxes | Budget-stop and deny-list tests pass | Next |
 | M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | |
 | M6 | Portability and console | A second agent runtime (OpenAI Codex CLI), a non-GitHub adapter, a local web console | The pass rate holds with no core change | |
 | M7 | Real-codebase validation | The factory on a real repository the team didn't build | Results compared with today's baseline | |
@@ -35,8 +35,21 @@ Each milestone ends with something that runs. M0, M1 and M2 are done.
 - **Declining** is an outcome: an agent that changes nothing and says why escalates to you, instead
   of failing the build.
 
+## What M3 added
+
+- **Intake from GitHub Issues.** `factory watch` polls issues labelled `factory` and reports back
+  on the issue with comments and `factory:<state>` labels. A restart carries on where it stopped.
+- **Specify** (spec agent, read-only, at most one round of questions) and the **spec gate**
+  (`/approve` or `/reject <reason>` on the issue, by people with write access).
+- **Plan** and the **plan check**: up to 8 small or medium tasks covering every acceptance
+  criterion, with dependencies. The factory checks these rules itself before any agent does.
+- **A scheduler.** Independent tasks run in parallel up to `concurrency`. A dependent task starts
+  after its dependencies merge, from the updated branch.
+- **A tester agent** in Verify writes acceptance tests from the spec without seeing the change.
+- **More than one repository** through `related_repos`, and the approved spec committed with the
+  first PR.
+
 ## Open questions
 
-- Should Verify grow a tester agent that writes tests for the acceptance criteria (planned with
-  the spec station in M3), or is the reviewer enough?
+- Is the tester worth its cost? The M3 eval compares Verify with and without it.
 - Should the per-task spend cap cover all attempts together, rather than each run?

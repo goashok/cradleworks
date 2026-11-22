@@ -83,6 +83,10 @@ export interface Task {
   lastReason?: string;
   /** The latest Verify result, the basis for rework feedback and the change gate. */
   evidence?: Evidence;
+  /** Project the task changes, when it isn't the work item's own. */
+  repo?: string;
+  /** The tester agent's tests, written from the spec before it saw the diff. */
+  acceptanceTests?: { runId: string; files: string[]; patch: string };
 }
 
 /** What Verify found for one commit of a task (Build spec, section 4). */
@@ -155,7 +159,11 @@ export interface WorkItem {
   blockedFrom?: WorkItemState;
   blockedReason?: string;
   maxReworkLoops: number;
+  /** Branch the work starts from and merges into, when not the project's default. */
+  baseBranch?: string;
   spec?: SpecPointer;
+  /** Questions the spec agent asked; it asks one round at most. */
+  specQuestions?: string[];
   /** Plan awaiting the plan check; moved to `tasks` once approved. */
   proposedTasks: Task[];
   tasks: Task[];

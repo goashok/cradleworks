@@ -14,6 +14,8 @@ export interface SpecDocument {
   problem: string;
   acceptanceCriteria: string[];
   outOfScope: string[];
+  /** What the spec agent assumed where the request was silent; the spec gate checks them. */
+  assumptions?: string[];
   approval?: SpecApproval;
 }
 

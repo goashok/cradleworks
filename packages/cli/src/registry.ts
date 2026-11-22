@@ -4,10 +4,10 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeCodeRuntime, resolveClaudeAuth } from '@cradleworks/adapter-claude-code';
-import { GitHubActionsCI, GitHubSourceControl, githubRepoRef } from '@cradleworks/adapter-github';
+import { GitHubActionsCI, GitHubIssuesTracker, GitHubSourceControl, githubRepoRef } from '@cradleworks/adapter-github';
 import { DockerSandbox } from '@cradleworks/adapter-local';
 import { LocalGitSourceControl, localRepoRef, ProcessSandbox } from '@cradleworks/contracts/fakes';
-import type { AgentRuntime, CI, RepoRef, Sandbox, SourceControl } from '@cradleworks/interfaces';
+import type { AgentRuntime, CI, RepoRef, Sandbox, SourceControl, Tracker } from '@cradleworks/interfaces';
 
 export interface SourceControlEntry {
   create(): SourceControl;
@@ -22,6 +22,8 @@ export interface Registry {
   runtime: Record<string, (context: { sandbox: Sandbox; env: Record<string, string | undefined> }) => AgentRuntime>;
   /** CI systems Verify can wait on. `none` (or any id missing here) means no CI. */
   ci: Record<string, { create: () => CI; /** Source control adapters whose repositories it builds. */ scm: string[] }>;
+  /** Where `factory watch` takes requests from. The tracker project is the repository's id. */
+  tracker: Record<string, { create: () => Tracker; /** Source control adapters whose repositories it tracks. */ scm: string[] }>;
   /** Sandboxes that do not isolate; the CLI warns when one is used. */
   testOnlySandboxes: ReadonlySet<string>;
 }
@@ -56,11 +58,12 @@ export function defaultRegistry(): Registry {
     ci: {
       'github-actions': { create: () => new GitHubActionsCI(), scm: ['github'] },
     },
+    tracker: {
+      'github-issues': { create: () => new GitHubIssuesTracker(), scm: ['github'] },
+    },
     testOnlySandboxes: new Set(['process']),
   };
 }
 
 /** When an adapter id is known but not built yet, say which milestone brings it. */
-export const PLANNED_ADAPTERS: Record<string, string> = {
-  'github-issues': 'M3 (tracker adapter)',
-};
+export const PLANNED_ADAPTERS: Record<string, string> = {};

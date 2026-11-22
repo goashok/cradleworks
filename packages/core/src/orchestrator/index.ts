@@ -7,7 +7,11 @@ export {
   type SubmitTaskInput,
   type TaskOutcome,
   type VerifyOutcome,
+  type WorkItemOutcome,
+  type WorkProgress,
 } from './orchestrator.ts';
+export * from './issue-flow.ts';
+export { EventSpecStore } from './spec-store.ts';
 export { combine, evidenceMarkdown, orderedCommands, parseReview, reworkFeedback, runChecks, waitForCi, type CiWaitOptions } from './verify.ts';
 export { WorkItemRepository, SNAPSHOT_EVERY } from './work-item-repository.ts';
 export { RunLog, type RunLogEntry } from './run-log.ts';

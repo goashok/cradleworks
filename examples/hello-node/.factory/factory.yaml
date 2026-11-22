@@ -4,7 +4,7 @@ project: hello-node
 adapters:
   scm: local-git          # a git repo on disk acts as the remote; use `github` for real PRs
   ci: none                # no CI for a local repo; use github-actions with scm: github
-  tracker: github-issues  # not used yet (intake from issues, M3)
+  tracker: none           # github-issues needs scm: github; see docs/guides/issues.md
   sandbox: local-docker   # one Docker container per task
   runtime: cli-agent
 
