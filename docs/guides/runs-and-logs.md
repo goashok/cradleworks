@@ -32,21 +32,25 @@ Build failed: commit: the agent finished without changing any files
 ```console
 $ factory status
 WORK ITEM                                STATE        TASKS  PROJECT     TITLE
-wi_5eb83867-b216-4ed4-ae28-57e85860a243  in_progress  0/1    hello-node  Add a farewell function
+wi_5eb83867-b216-4ed4-ae28-57e85860a243  awaiting_change_approval  0/1    hello-node  Add a farewell function
 
 $ factory status wi_5eb83867-b216-4ed4-ae28-57e85860a243
-wi_5eb83867-b216-4ed4-ae28-57e85860a243  in_progress
+wi_5eb83867-b216-4ed4-ae28-57e85860a243  awaiting_change_approval
   title      Add a farewell function
   project    hello-node
   requester  you
   …
 Tasks
-  task_6dca1aa4-…  verifying  Add a farewell function
+  task_6dca1aa4-…  ready  Add a farewell function
     pr      https://github.com/you/repo/pull/12
     branch  factory/task-6dca1aa4
+    verify  pass at b9ccd6836f76: checks passed, CI passed, reviewer passed (low risk)
+            checks: build ✓, test ✓   CI: passed   reviewer: pass (low risk)
+    next    factory approve task_6dca1aa4-… [--merge], or factory reject task_6dca1aa4-… --reason "..."
 
 Runs
-  run_d4d34200-…  build  succeeded  2026-11-22T15:14:43.023Z
+  run_d4d34200-…  build   succeeded  2026-11-22T15:14:43.023Z
+  run_c5131ffe-…  verify  succeeded  2026-11-22T15:14:52.410Z
 
 Gates
   spec_approval  approved (skipped) by you
@@ -55,8 +59,11 @@ Gates
 
 How to read it:
 
-- **TASKS `0/1`** counts merged tasks. A task with an open PR sits in `verifying`, waiting for
-  the Verify station (M2) and for you to review the PR.
+- **TASKS `0/1`** counts merged tasks.
+- **verify** is the latest evidence: the commit checked, each check, CI and the reviewer. A
+  reworked task also shows a `rework` line with its attempts against the limit.
+- **next** is the command that moves the task on. See
+  [Verify, rework and approve](verify-and-approve.md).
 - **Gates** shows each recorded decision. A hand-written task skips the spec and plan gates,
   because you wrote it. The reason is stored with the decision.
 - A failed task shows a `reason` line with the step that failed.
@@ -100,11 +107,15 @@ Find the failing step in `factory status <work-item>` or at the end of `factory 
 | `clone` | no access to the repo, or a wrong base branch | your GitHub sign-in; `--base` |
 | `sandbox` | image missing, or Docker not running | `docker image ls`; `factory validate` |
 | `agent` | the agent stopped: a time or spend limit, or an error | the last `says` and `← error` lines |
-| `commit` "without changing any files" | the agent decided not to change anything | its `summary`, which says why |
+| (declined) | the agent decided not to change anything; the task escalates | its `summary`, which says why |
 | `push` / `pr` | no permission to push, or a PR for that branch already exists | the token's scopes; open PRs |
 
-To try again, submit the task again. Each submit is a new work item with fresh ids, so nothing
-is overwritten.
+A failed **build** run fails the task: submit it again, which makes a new work item with fresh
+ids. A task that **escalated** (declined, out of rework, or Verify couldn't decide) can carry on:
+`factory retry <task> [--note "…"]`.
+
+A **verify** run's log has `check`, `ci`, `review` and `verdict` lines. `--full` adds each failed
+check's output and every reviewer reason.
 
 ## Where state lives
 

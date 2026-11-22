@@ -87,5 +87,7 @@ Be clear about these before you point the factory at something sensitive:
 - **Proxy decisions aren't in the run log yet.** The proxy records every allow and deny, but the
   run log doesn't include them yet.
 
-**Always review the PR.** Until the Verify station and the change gate arrive (M2), your review is
-the gate.
+**Keep the human change gate.** Verify catches failing checks and a lot of what a reviewer would
+flag, but it is another agent. `change_approval: human` and `auto_merge: false` are the
+defaults, so nothing merges until a person approves it. The reviewer agent runs in its own fresh
+sandbox, with the same network rules, and its file-editing tools are switched off.

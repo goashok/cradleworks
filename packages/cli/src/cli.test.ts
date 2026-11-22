@@ -35,11 +35,17 @@ function registry(): Registry {
   return {
     ...base,
     runtime: {
-      scripted: () =>
-        new ScriptedAgentRuntime(() => [
-          { kind: 'message', text: 'Adding a changelog.' },
-          { kind: 'write', path: 'CHANGELOG.md', content: '# Changelog\n' },
-        ]),
+      scripted: () => {
+        let builds = 0;
+        return new ScriptedAgentRuntime((req) =>
+          req.profile.role === 'reviewer'
+            ? [{ kind: 'message', text: 'Fine.\n{"verdict":"pass","risk":"low","reasons":[]}' }]
+            : [
+                { kind: 'message', text: 'Adding a changelog.' },
+                { kind: 'write', path: 'CHANGELOG.md', content: `# Changelog ${++builds} ${Math.random()}\n` },
+              ],
+        );
+      },
     },
   };
 }
@@ -102,23 +108,52 @@ describe('factory submit', () => {
     const list = await factory(['status']);
     expect(list.code).toBe(0);
     expect(list.stdout).toMatch(/WORK ITEM\s+STATE\s+TASKS\s+PROJECT\s+TITLE/);
-    expect(list.stdout).toMatch(/wi_\S+\s+in_progress\s+0\/1\s+demo\s+Add a changelog/);
+    expect(list.stdout).toMatch(/wi_\S+\s+awaiting_change_approval\s+0\/1\s+demo\s+Add a changelog/);
+    expect(result.stdout).toMatch(/Passed: checks passed, CI not configured, reviewer passed \(low risk\)/);
+    expect(result.stdout).toMatch(/approve with {2}factory approve task_\S+/);
 
     const id = /(wi_\S+)/.exec(list.stdout.split('\n')[1]!)![1]!;
     const detail = await factory(['status', id]);
-    expect(detail.stdout).toContain('verifying  Add a changelog');
+    expect(detail.stdout).toContain('ready  Add a changelog');
+    expect(detail.stdout).toMatch(/verify {2}pass at [0-9a-f]{12}/);
+    expect(detail.stdout).toContain('checks: build ✓, test ✓   CI: not configured   reviewer: pass (low risk)');
     expect(detail.stdout).toMatch(/pr\s+file:\/\/.*#pull-1/);
     expect(detail.stdout).toMatch(/spec_approval\s+approved \(skipped\) by /);
   });
 
-  it('reports a failed build with exit code 1', async () => {
+  it('escalates with exit code 1 when the agent changes nothing', async () => {
     const reg = registry();
-    reg.runtime.scripted = () => new ScriptedAgentRuntime(() => [{ kind: 'message', text: 'No changes.' }]);
+    reg.runtime.scripted = () => new ScriptedAgentRuntime(() => [{ kind: 'message', text: 'No changes needed.' }]);
     const taskFile = join(root, 'task.md');
     writeFileSync(taskFile, '# Do nothing\n');
     const result = await factory(['submit', taskFile], checkout, reg);
     expect(result.code).toBe(1);
-    expect(result.stderr).toMatch(/Build failed: commit: the agent finished without changing any files/);
+    expect(result.stdout).toMatch(/The agent changed nothing and said why:\n {2}No changes needed\./);
+    expect(result.stdout).toMatch(/try again {3}factory retry task_\S+/);
+  });
+
+  it('approves and merges, rejects into rework, and builds only on request', async () => {
+    const taskFile = join(root, 'task.md');
+    writeFileSync(taskFile, '# Add a changelog\n');
+    const first = await factory(['submit', taskFile]);
+    const taskId = /factory approve (task_\S+)/.exec(first.stdout)![1]!;
+
+    const rejected = await factory(['reject', taskId, '--reason', 'Say what changed.']);
+    expect(rejected.code).toBe(0);
+    expect(rejected.stdout).toMatch(/Sent task_\S+ back for rework\nPushed rework 1 to file:/);
+    expect(rejected.stdout).toContain('Ready for review');
+
+    expect(await factory(['approve', taskId])).toMatchObject({ code: 0, stdout: expect.stringMatching(/^Approved task_/) });
+    const merged = await factory(['approve', taskId, '--merge']);
+    expect(merged.code).toBe(0);
+    expect(merged.stdout).toMatch(/merged [0-9a-f]{12}/);
+    const list = await factory(['status']);
+    expect(list.stdout).toMatch(/merged\s+1\/1/);
+
+    expect(await factory(['approve', 'task_nope'])).toMatchObject({ code: 2, stderr: expect.stringMatching(/no task or work item task_nope/) });
+    const buildOnly = await factory(['submit', taskFile, '--build-only']);
+    expect(buildOnly.code).toBe(0);
+    expect(buildOnly.stdout).not.toContain('Passed:');
   });
 
   it('explains setup problems with exit code 2', async () => {
@@ -178,10 +213,11 @@ describe('factory validate', () => {
   });
 
   it('names a planned adapter without failing', async () => {
-    writeFileSync(join(checkout, '.factory/factory.yaml'), FACTORY_YAML.replace('ci: none', 'ci: github-actions'));
+    writeFileSync(join(checkout, '.factory/factory.yaml'), FACTORY_YAML.replace('tracker: none', 'tracker: github-issues').replace('ci: none', 'ci: github-actions'));
     const r = await factory(['validate']);
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('"github-actions" is not built yet');
+    expect(r.stdout).toContain('"github-issues" is not built yet');
+    expect(r.stdout).toContain('ci "github-actions" does not build local-git repositories');
   });
 
   it('shows config errors with line numbers', async () => {

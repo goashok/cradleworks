@@ -23,7 +23,7 @@ project: my-service              # a name for logs and status
 
 adapters:
   scm: github                    # or local-git to try it without GitHub
-  ci: github-actions             # reserved for the Verify station (M2)
+  ci: github-actions             # Verify waits for workflow runs on each pushed commit
   tracker: github-issues         # reserved for issue intake (M3)
   sandbox: local-docker
   runtime: cli-agent

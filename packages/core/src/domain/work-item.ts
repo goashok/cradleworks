@@ -126,6 +126,22 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       break;
     }
 
+    case 'task_evidence_recorded': {
+      const task = findTask(wi, event.taskId, fail);
+      expectTaskState(task, ['verifying'], fail);
+      task.evidence = event.evidence;
+      break;
+    }
+
+    case 'task_declined': {
+      const task = findTask(wi, event.taskId, fail);
+      expectTaskState(task, ['building'], fail);
+      if (event.reason.trim() === '') fail('a decline needs a reason');
+      task.state = 'escalated';
+      task.lastReason = event.reason;
+      break;
+    }
+
     case 'task_verified': {
       const task = findTask(wi, event.taskId, fail);
       expectTaskState(task, ['verifying'], fail);
@@ -156,6 +172,7 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       if (!Number.isInteger(event.extraLoops) || event.extraLoops < 1) fail('extraLoops must be a positive integer');
       task.extraLoops += event.extraLoops;
       task.state = 'rework';
+      if (event.note) task.lastReason = event.note;
       break;
     }
 

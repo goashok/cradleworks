@@ -7,12 +7,14 @@ import { join } from 'node:path';
 import type { AgentRunRequest, SandboxHandle } from '@cradleworks/interfaces';
 import {
   describeAgentRuntimeContract,
+  describeCIContract,
   describeSandboxContract,
   describeSourceControlContract,
   describeStateStoreContract,
 } from './index.ts';
 import {
   createBareRepo,
+  FakeCI,
   InMemoryStateStore,
   LocalGitSourceControl,
   localRepoRef,
@@ -100,3 +102,22 @@ describeAgentRuntimeContract('scripted fake', async () => {
 });
 
 describeStateStoreContract('in-memory fake', async () => ({ store: new InMemoryStateStore(), cleanup: async () => {} }));
+
+describeCIContract('fake CI', async () => {
+  const ci = new FakeCI();
+  const repo = { id: 'owner/demo', url: 'https://ci.invalid/owner/demo' };
+  ci.addRun(repo, 'a'.repeat(40), { state: 'passed', pendingPolls: 1, artifacts: { 'report.txt': 'all good' } });
+  ci.addRun(repo, 'b'.repeat(40), { state: 'failed', jobs: [{ name: 'lint' }, { name: 'test', failed: true, log: 'running\nFAILED: expected 2 got 3' }] });
+  return {
+    adapter: ci,
+    repo,
+    passingSha: 'a'.repeat(40),
+    failingSha: 'b'.repeat(40),
+    failingJob: 'test',
+    failureMarker: 'FAILED: expected 2 got 3',
+    unbuiltSha: 'c'.repeat(40),
+    waitSeconds: 5,
+    artifact: { name: 'report.txt', containsText: 'all good' },
+    cleanup: async () => undefined,
+  };
+});

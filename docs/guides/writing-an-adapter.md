@@ -26,7 +26,8 @@ up in `packages/core`.
 | `Sandbox` | `create`, `exec`, `spawn`, `copyIn`, `copyOut`, `setNetworkPolicy`, `destroy` | `describeSandboxContract` |
 | `AgentRuntime` | `requiredHosts`, `start` → an `AgentRun` with `events`, `stop`, `getUsage` | `describeAgentRuntimeContract` |
 | `StateStore` | append events, query, snapshot | `describeStateStoreContract` |
-| `CI`, `Tracker`, `Notifier`, `ModelProvider`, `SpecStore` | defined; used from M2 on | coming with their first adapter |
+| `CI` | `findRuns`, `getRunStatus`, `getLogs`, `getArtifacts`, `downloadArtifact`, `trigger` | `describeCIContract` |
+| `Tracker`, `Notifier`, `ModelProvider`, `SpecStore` | defined; used from M3 on | coming with their first adapter |
 
 Read the interface file itself for the exact types and guarantees. Each one is short and
 documented, for example `packages/interfaces/src/sandbox.ts`.

@@ -2,7 +2,7 @@
 // Agent-level events (tool calls, usage) go to each run's own stream instead.
 
 import type { AgentProfile, ExternalRef, GateName, Timestamp } from '@cradleworks/interfaces';
-import type { GateMode, GateVerdict, RunOutcome, Station, TaskSize } from './types.ts';
+import type { Evidence, GateMode, GateVerdict, RunOutcome, Station, TaskSize } from './types.ts';
 
 interface Base {
   at: Timestamp;
@@ -43,9 +43,12 @@ export type WorkItemEvent =
   | (Base & { type: 'task_started'; taskId: string; branch: string })
   | (Base & { type: 'task_pr_opened'; taskId: string; pr: ExternalRef })
   | (Base & { type: 'task_built'; taskId: string })
+  | (Base & { type: 'task_evidence_recorded'; taskId: string; evidence: Evidence })
   | (Base & { type: 'task_verified'; taskId: string; verdict: 'pass' | 'rework' | 'escalate'; reason: string })
+  /** The implementer finished without changing anything and said why; a human decides. */
+  | (Base & { type: 'task_declined'; taskId: string; reason: string })
   | (Base & { type: 'task_rework_started'; taskId: string })
-  | (Base & { type: 'task_retry_granted'; taskId: string; grantedBy: string; extraLoops: number })
+  | (Base & { type: 'task_retry_granted'; taskId: string; grantedBy: string; extraLoops: number; note?: string })
   | (Base & { type: 'task_merged'; taskId: string; sha: string })
   | (Base & { type: 'task_budget_exceeded'; taskId: string; spentUsd: number })
   | (Base & { type: 'task_budget_extended'; taskId: string; extendedBy: string; newLimitUsd: number })
@@ -69,7 +72,9 @@ export const WORK_ITEM_EVENT_TYPES: ReadonlySet<WorkItemEventType> = new Set<Wor
   'task_started',
   'task_pr_opened',
   'task_built',
+  'task_evidence_recorded',
   'task_verified',
+  'task_declined',
   'task_rework_started',
   'task_retry_granted',
   'task_merged',

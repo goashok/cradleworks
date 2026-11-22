@@ -57,6 +57,7 @@ class ScriptedRun implements AgentRun {
   #usage: Usage = { ...ZERO_USAGE };
   #seq = 0;
   #stopReason: string | undefined;
+  #lastMessage: string | undefined;
 
   constructor(request: AgentRunRequest, steps: ScriptStep[]) {
     this.runId = request.runId;
@@ -86,7 +87,9 @@ class ScriptedRun implements AgentRun {
 
     const finish = (outcome: AgentOutcome, error?: string) => {
       if (timer) clearTimeout(timer);
-      this.#emit({ type: 'done', outcome, total: { ...this.#usage }, ...(error ? { error } : {}) });
+      // Like a real CLI agent, the closing summary is the last thing it said.
+      const summary = this.#lastMessage;
+      this.#emit({ type: 'done', outcome, total: { ...this.#usage }, ...(error ? { error } : {}), ...(summary ? { summary } : {}) });
       this.#channel.close();
     };
 
@@ -95,6 +98,7 @@ class ScriptedRun implements AgentRun {
         if (this.#abort.signal.aborted) break;
         switch (step.kind) {
           case 'message':
+            this.#lastMessage = step.text;
             this.#emit({ type: 'message', role: 'assistant', text: step.text });
             break;
           case 'write': {

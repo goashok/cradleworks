@@ -58,8 +58,13 @@ If you know about such a trap, put it in the task. If it applies to every task, 
 tasks. Splitting large work items automatically is the Plan station's job (M3).
 
 **Say when "no change" is a valid answer.** Asked to "tidy up" code that was already as simple as
-it could safely be, an agent sensibly changed nothing and explained why. Today the factory records
-that as a failed build, at the `commit` step. The agent's reasoning is in `factory log`.
+it could safely be, an agent sensibly changed nothing and explained why. The factory records that
+as **declined** and escalates to you with the agent's reason. Agree with `factory cancel`, or
+insist with `factory retry <task> --note "…"`. Saying up front what to do in that case saves the
+round trip.
+
+**Write down what "done" means.** The reviewer in Verify reads the task and judges the diff
+against it. A clear `Done when …` line is what it checks first.
 
 ## Sizes that work today
 

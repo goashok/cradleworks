@@ -24,7 +24,7 @@ effect in the milestone shown.
 | `scm` | `github`, `local-git` | ✅ | Where the repo lives and PRs are opened. The repo is read from the `origin` remote. |
 | `sandbox` | `local-docker` (`process` for tests only) | ✅ | Where the agent runs. `process` isn't isolated, and the CLI warns if you use it. |
 | `runtime` | `cli-agent` | ✅ | How the agent is driven: a CLI agent, headless, inside the sandbox. |
-| `ci` | `github-actions` | ⏳ M2 | CI to wait on in the Verify station. |
+| `ci` | `github-actions`, `none` | ✅ | CI to wait on in the Verify station. `github-actions` needs `scm: github`. |
 | `tracker` | `github-issues` | ⏳ M3 | Where requests come from. |
 
 ## `runtime` (required)
@@ -33,7 +33,7 @@ effect in the milestone shown.
 | --- | --- | --- | --- |
 | `agent` | string | ✅ | The agent to run. Today: `claude-code`. |
 | `model` | string | ✅ | The model id passed to the agent, e.g. `claude-sonnet-5-5`. |
-| `roles.<role>.agent` / `.model` | string | ✅ `implementer` · ⏳ others | Override the agent or model for one role: `implementer` (Build), and from M2–M3 `specifier`, `planner`, `tester` and `reviewer`. |
+| `roles.<role>.agent` / `.model` | string | ✅ `implementer`, `reviewer` · ⏳ others | Override the agent or model for one role: `implementer` (Build), `reviewer` (Verify), and from M3 `specifier`, `planner`, `tester` and `reviewer`. |
 
 ## `stack` (required)
 
@@ -46,7 +46,8 @@ effect in the milestone shown.
 | any other key | string | ✅ optional | A further named command, e.g. `frontend_test`, `contract_test`. |
 
 Today, every command is listed by name in the agent's instructions, and the agent is told to run
-the build and tests before finishing. From M2, the Verify station also runs them itself.
+the build and tests before finishing. The Verify station runs them again itself, in a fresh sandbox: `build` first, then `lint`,
+`test` and the others in file order.
 
 ## `context` (required)
 
@@ -63,18 +64,18 @@ Each gate is `human`, `ai` or `skip`.
 | --- | --- | --- | --- |
 | `spec_approval` | `human` | ⏳ M3 | Who approves the spec before code is written. |
 | `plan_check` | `ai` | ⏳ M3 | Who checks the task breakdown. |
-| `change_approval` | `human` | ⏳ M2 | Who approves the PR with its evidence. |
-| `auto_merge` | `false` | ⏳ M2 | Merge automatically once the change gate approves. |
+| `change_approval` | `human` | ✅ | Who approves a PR that passed Verify: `human` (`factory approve`), `ai` (the reviewer's pass) or `skip`. |
+| `auto_merge` | `false` | ✅ | Squash-merge automatically once the change gate approves. |
 
 Hand-written tasks from `factory submit` record the spec and plan gates as skipped, because you
-wrote the spec. Until M2, a human reviews and merges every PR.
+wrote the spec. See [Verify, rework and approve](../guides/verify-and-approve.md).
 
 ## `budgets` (required, defaults provided)
 
 | Key | Type | Default | Status | Meaning |
 | --- | --- | --- | --- | --- |
 | `per_task_usd` | number > 0 | `5` | ✅ | The spend limit for one agent run. The agent stops when it's reached. |
-| `max_rework_loops` | integer ≥ 0 | `3` | ⏳ M2 | Verify → Build loops before a task escalates to a human. Recorded on each work item. |
+| `max_rework_loops` | integer ≥ 0 | `3` | ✅ | Verify → Build loops (and gate rejections) before a task escalates to a human. Recorded on each work item. |
 | `per_user_daily_usd` | number > 0 | none | ⏳ M4 | Daily spend cap per requester. |
 | `per_user_monthly_usd` | number > 0 | none | ⏳ M4 | Monthly spend cap per requester. |
 

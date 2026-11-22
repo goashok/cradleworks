@@ -41,14 +41,18 @@ Cradleworks is early. This is the honest picture:
   It works on GitHub, or on a plain git repo on disk for trying it out.
 - ✅ **Isolated runs.** Each task gets its own git worktree and Docker container. All
   capabilities are dropped, and outbound network goes through an allow-list proxy.
+- ✅ **Checked before you see it.** A Verify step runs the project's build and tests in a fresh
+  sandbox, waits for CI, and asks a second agent to review the diff. Failures go back to the agent
+  with the reasons, and the fix lands on the same PR. The evidence is posted on the PR.
+- ✅ **A real change gate.** A task that passes waits for `factory approve` (or an approving
+  review on the PR). The factory merges only the exact commit it verified.
 - ✅ **Full record.** Every step goes to an append-only event log. `factory log <run>` replays it.
 - ✅ **Per-project setup.** One `.factory/` folder describes a project: image, commands, rules and
   limits. `factory validate` checks it.
 - ✅ **Measured.** It has been run against a private suite of 30 graded tasks on two reference
   projects. The first baseline passed 26 of 29, for $2.27 in total ([results](docs/guides/evaluating.md)).
-- 🚧 **Not yet:** verifying the agent's work before the PR (M2), turning GitHub issues into specs
-  and plans (M3), enforced approval gates and per-user budgets (M2–M4), and a web console (M6).
-  Today a human reviews every PR. See the [roadmap](docs/roadmap.md).
+- 🚧 **Not yet:** turning GitHub issues into specs and plans (M3), per-user budgets and scoped
+  tokens (M4), and a web console (M6). See the [roadmap](docs/roadmap.md).
 
 ## How it works, in one picture
 
@@ -64,10 +68,16 @@ Cradleworks is early. This is the honest picture:
         │ 4. run the agent inside the sandbox, with limits     │
         │ 5. commit, push the branch, open the pull request    │
         └──────────────────────────────────────────────────────┘
-               │                                   │
-               ▼                                   ▼
-         pull request                  event log (~/.cradleworks)
-                                       factory status / factory log
+               │                                ▲
+               ▼                                │ rework, with the reasons
+        ┌─ Verify (fresh sandbox) ───────────────┴─────────────┐
+        │ build + lint + tests · CI on the commit · reviewer   │
+        │ agent → pass / rework / escalate, evidence on the PR │
+        └──────────────────────────────────────────────────────┘
+               │ pass
+               ▼
+         change gate: factory approve [--merge]   event log (~/.cradleworks)
+                                                  factory status / factory log
 ```
 
 The longer version is in [How it works](docs/how-it-works.md).
@@ -93,6 +103,8 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 **Guides**
 - [Add your own project](docs/guides/add-a-project.md): write a `.factory/` folder and switch to GitHub
 - [Write good tasks](docs/guides/writing-tasks.md): what to put in a task file, and what the agent sees
+- [Verify, rework and approve](docs/guides/verify-and-approve.md): what's checked, the evidence,
+  the change gate, and what to do when a task escalates
 - [Follow and replay runs](docs/guides/runs-and-logs.md): `status`, `log`, and where state lives
 - [Sandbox and credentials](docs/guides/security.md): what the agent can and cannot reach
 - [Measure the factory](docs/guides/evaluating.md): the eval suite and the first baseline

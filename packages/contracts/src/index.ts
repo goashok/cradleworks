@@ -5,3 +5,4 @@ export { describeSourceControlContract, type ContractOptions, type SourceControl
 export { describeSandboxContract, type SandboxFixture } from './sandbox.contract.ts';
 export { describeAgentRuntimeContract, type AgentRuntimeFixture } from './agent-runtime.contract.ts';
 export { describeStateStoreContract, type StateStoreFixture } from './state-store.contract.ts';
+export { describeCIContract, type CIFixture } from './ci.contract.ts';

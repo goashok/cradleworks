@@ -6,8 +6,8 @@ import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { ConfigError, loadProjectConfig } from '@cradleworks/config';
-import { Orchestrator, WorkItemRepository, type Project, type WorkItem } from '@cradleworks/core';
-import type { AgentRuntime } from '@cradleworks/interfaces';
+import { Orchestrator, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem } from '@cradleworks/core';
+import type { AgentRuntime, CI } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
@@ -34,6 +34,18 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await validateProject(rest, io);
       case 'log':
         return await log(rest, io);
+      case 'approve':
+        return await approve(rest, io);
+      case 'reject':
+        return await reject(rest, io);
+      case 'retry':
+        return await retry(rest, io);
+      case 'resume':
+        return await resume(rest, io);
+      case 'cancel':
+        return await cancel(rest, io);
+      case 'sync':
+        return await sync(rest, io);
       case undefined:
       case 'help':
       case '--help':
@@ -58,11 +70,25 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
 }
 
 const USAGE = `Usage:
-  factory submit <task.md> [--base <branch>]   Build a hand-written task and open a pull request
-  factory status [<work-item-id>]              List work items, or show one in detail
-  factory validate [<dir>]                     Check a project's .factory/ setup without running anything
-  factory log <run-id|work-item-id> [--full] [--json]
-                                               Replay a run's event log: every step, tool call and file change
+  factory submit <task.md> [--base <branch>] [--build-only]
+                                    Build a hand-written task, open a pull request, verify it,
+                                    rework it until it passes, and stop at the change gate
+  factory status [<id>]             List work items, or show one with its evidence
+  factory approve <id> [--merge] [--reason <text>]
+                                    Pass a ready task through the change gate (and merge it)
+  factory reject <id> --reason <text> [--no-run]
+                                    Send a ready task back; the reason becomes rework feedback
+  factory retry <id> [--loops <n>] [--note <text>] [--no-run]
+                                    Give an escalated task more attempts
+  factory resume <id>               Continue a task from where it stands
+  factory sync [<id>]               Pick up approvals, requested changes and merges from pull requests
+  factory cancel <id> [--reason <text>]
+                                    Cancel a work item
+  factory validate [<dir>]          Check a project's .factory/ setup without running anything
+  factory log <run-id|id> [--full] [--json]
+                                    Replay a run's event log: every step, tool call and file change
+
+<id> is a work item id (wi_…) or a task id (task_…).
 
 Run inside a repository that has a .factory/ folder. Factory state lives in
 $CRADLEWORKS_HOME (default ~/.cradleworks).
@@ -93,9 +119,11 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   adapter('scm', config.adapters.scm, Object.keys(registry.sourceControl));
   adapter('sandbox', config.adapters.sandbox, Object.keys(registry.sandbox));
   adapter('runtime', config.adapters.runtime, Object.keys(registry.runtime));
-  adapter('ci', config.adapters.ci, undefined);
+  adapter('ci', config.adapters.ci, [...Object.keys(registry.ci), 'none']);
   adapter('tracker', config.adapters.tracker, undefined);
-  for (const id of [config.adapters.ci, config.adapters.tracker]) {
+  const ciEntry = registry.ci[config.adapters.ci];
+  if (ciEntry && !ciEntry.scm.includes(config.adapters.scm)) notes.push(`ci "${config.adapters.ci}" does not build ${config.adapters.scm} repositories; Verify will run without CI`);
+  for (const id of [config.adapters.tracker]) {
     if (PLANNED_ADAPTERS[id]) notes.push(`adapter "${id}" is not built yet (arrives in ${PLANNED_ADAPTERS[id]}); submit does not need it`);
   }
 
@@ -138,7 +166,11 @@ function relativeOrSelf(from: string, to: string): string {
 // --- submit -------------------------------------------------------------------
 
 async function submit(args: string[], io: CliEnv): Promise<number> {
-  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { base: { type: 'string' } } });
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { base: { type: 'string' }, 'build-only': { type: 'boolean' } },
+  });
   const [taskPath] = positionals;
   if (!taskPath || positionals.length > 1) throw new UsageError('submit takes exactly one task file: factory submit <task.md>');
   const file = resolve(io.cwd, taskPath);
@@ -151,16 +183,75 @@ async function submit(args: string[], io: CliEnv): Promise<number> {
     const { workItemId, taskId } = await ctx.orchestrator.submitTask({ project, title: task.title, body: task.body, requester: await requester(ctx.repoRoot, io) });
     io.stdout(`Submitted "${task.title}" as ${workItemId}\nBuilding ${taskId}...\n`);
 
-    const result = await ctx.orchestrator.runBuild(project, workItemId, taskId);
-    if (result.outcome === 'pr_opened') {
-      io.stdout(`Opened ${result.pr.url}\n  branch ${result.branch}\n  run    ${result.runId}\n`);
-      return 0;
+    if (values['build-only']) {
+      const result = await ctx.orchestrator.runBuild(project, workItemId, taskId);
+      printProgress(io, { kind: 'built', outcome: result, attempt: 1 });
+      return result.outcome === 'pr_opened' ? 0 : 1;
     }
-    io.stderr(`Build failed: ${result.reason}\n  run ${result.runId}\n`);
-    return 1;
+    const outcome = await ctx.orchestrator.runTask(project, workItemId, taskId, (p) => printProgress(io, p));
+    return printOutcome(io, taskId, workItemId, outcome);
   } finally {
     await ctx.close();
   }
+}
+
+function printProgress(io: CliEnv, p: Progress): void {
+  switch (p.kind) {
+    case 'built': {
+      const o = p.outcome;
+      if (o.outcome === 'pr_opened') {
+        io.stdout(o.reworked ? `Pushed rework ${p.attempt - 1} to ${o.pr.url}\n  run    ${o.runId}\n` : `Opened ${o.pr.url}\n  branch ${o.branch}\n  run    ${o.runId}\n`);
+        io.stdout('Verifying...\n');
+      } else if (o.outcome === 'declined') {
+        io.stdout(`The agent changed nothing and said why:\n${indent(o.reason)}\n  run ${o.runId}\n`);
+      } else {
+        io.stderr(`Build failed: ${o.reason}\n  run ${o.runId}\n`);
+      }
+      return;
+    }
+    case 'verified': {
+      const o = p.outcome;
+      if (o.evidence) io.stdout(`${indent(evidenceLines(o.evidence).join('\n'))}\n`);
+      const word = { pass: 'Passed', rework: 'Sent back for rework', escalate: 'Needs a human' }[o.verdict];
+      io.stdout(`${word}: ${o.reason}\n  run    ${o.runId}\n`);
+      if (o.verdict === 'rework') io.stdout('Reworking...\n');
+      return;
+    }
+    case 'gate':
+      if (p.verdict === 'approved') io.stdout(`Change gate: approved (${p.mode})\n`);
+      return;
+    case 'merged':
+      io.stdout(`Merged ${p.sha.slice(0, 12)}\n`);
+      return;
+  }
+}
+
+/** Exit 0 when the task reached the gate or beyond; 1 when it failed or needs a person. */
+function printOutcome(io: CliEnv, taskId: string, workItemId: string, outcome: TaskOutcome): number {
+  switch (outcome.state) {
+    case 'ready':
+      if (outcome.awaitingApproval) io.stdout(`Ready for review: ${outcome.pr?.url ?? ''}\n  approve with  factory approve ${taskId} [--merge]\n  or send back  factory reject ${taskId} --reason "..."\n`);
+      else io.stdout(`Approved and ready to merge: ${outcome.pr?.url ?? ''}\n`);
+      return 0;
+    case 'merged':
+      return 0;
+    case 'escalated':
+      io.stdout(`Escalated: ${outcome.reason ?? 'needs a person'}\n  details     factory status ${workItemId}\n  try again   factory retry ${taskId} [--note "..."]\n  give up     factory cancel ${workItemId}\n`);
+      return 1;
+    default:
+      if (outcome.state !== 'failed') io.stdout(`Task is ${outcome.state}${outcome.reason ? `: ${outcome.reason}` : ''}\n`);
+      return 1;
+  }
+}
+
+function evidenceLines(e: Evidence): string[] {
+  const mark = (o: string) => ({ passed: '✓', failed: '✗', timed_out: '⏱', skipped: '–' })[o] ?? o;
+  const checks = e.checks.map((c) => `${c.name} ${mark(c.outcome)}${c.flaky ? ' (flaky)' : ''}`).join(', ');
+  const ci = e.ci.state === 'not_configured' ? 'not configured' : e.ci.state === 'none' ? 'no run' : e.ci.state;
+  const review = e.review ? `${e.review.verdict} (${e.review.risk} risk)` : 'not run';
+  const lines = [`checks: ${checks || 'none'}   CI: ${ci}   reviewer: ${review}`];
+  for (const r of e.review?.reasons ?? []) lines.push(`  - ${r}`);
+  return lines;
 }
 
 export function parseTaskFile(text: string, name: string): { title: string; body: string } {
@@ -170,6 +261,137 @@ export function parseTaskFile(text: string, name: string): { title: string; body
     throw new UsageError(`${name} must start with a "# Title" heading`);
   }
   return { title: lines[index]!.replace(/^#\s+/, '').trim(), body: lines.slice(index + 1).join('\n').trim() };
+}
+
+// --- gate, retry, resume, cancel, sync ---------------------------------------------
+
+async function approve(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { merge: { type: 'boolean' }, reason: { type: 'string' } } });
+  return withTask(positionals, 'approve', io, async (ctx, wi, task) => {
+    const by = await requester(ctx.repoRoot, io);
+    const result = await ctx.orchestrator.approveTask(ctx.project, wi.id, task.id, { by, ...(values.reason ? { reason: values.reason } : {}), merge: values.merge ?? false });
+    io.stdout(result.merged ? `Approved and merged ${result.merged.slice(0, 12)}\n` : `Approved ${task.id}${task.pr ? `; merge it on ${task.pr.url} or with factory approve ${task.id} --merge` : ''}\n`);
+    return 0;
+  });
+}
+
+async function reject(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { reason: { type: 'string' }, 'no-run': { type: 'boolean' } } });
+  if (!values.reason?.trim()) throw new UsageError('reject needs --reason "<what to change>"');
+  return withTask(positionals, 'reject', io, async (ctx, wi, task) => {
+    await ctx.orchestrator.rejectTask(wi.id, task.id, { by: await requester(ctx.repoRoot, io), reason: values.reason! });
+    io.stdout(`Sent ${task.id} back for rework\n`);
+    return values['no-run'] ? 0 : continueTask(ctx, io, wi.id, task.id);
+  });
+}
+
+async function retry(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { loops: { type: 'string' }, note: { type: 'string' }, 'no-run': { type: 'boolean' } } });
+  const loops = values.loops === undefined ? 1 : Number(values.loops);
+  if (!Number.isInteger(loops) || loops < 1) throw new UsageError('--loops must be a whole number of at least 1');
+  return withTask(positionals, 'retry', io, async (ctx, wi, task) => {
+    await ctx.orchestrator.retryTask(wi.id, task.id, { by: await requester(ctx.repoRoot, io), extraLoops: loops, ...(values.note ? { note: values.note } : {}) });
+    io.stdout(`Granted ${loops} more attempt${loops > 1 ? 's' : ''} to ${task.id}\n`);
+    return values['no-run'] ? 0 : continueTask(ctx, io, wi.id, task.id);
+  });
+}
+
+async function resume(args: string[], io: CliEnv): Promise<number> {
+  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  return withTask(positionals, 'resume', io, (ctx, wi, task) => continueTask(ctx, io, wi.id, task.id));
+}
+
+async function cancel(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { reason: { type: 'string' } } });
+  const [id] = positionals;
+  if (!id || positionals.length > 1) throw new UsageError('cancel takes one work item or task id');
+  const store = new SqliteStateStore({ path: join(factoryHome(io), 'state.db') });
+  try {
+    const { wi } = await findTarget(new WorkItemRepository(store), store, id);
+    const repo = new WorkItemRepository(store);
+    const latest = (await repo.load(wi.id))!;
+    await repo.append(latest, [{ type: 'work_item_cancelled', at: new Date().toISOString(), reason: values.reason?.trim() || 'cancelled from the CLI' }]);
+    io.stdout(`Cancelled ${wi.id}. Its pull requests stay open; close them on the forge if you want.\n`);
+    return 0;
+  } finally {
+    await store.close();
+  }
+}
+
+async function sync(args: string[], io: CliEnv): Promise<number> {
+  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  if (positionals.length > 1) throw new UsageError('sync takes at most one id');
+  const ctx = await openProject(io);
+  try {
+    let ids: string[];
+    if (positionals[0]) {
+      ids = [(await findTarget(ctx.repository, ctx.store, positionals[0])).wi.id];
+    } else {
+      const received = await ctx.store.query({ types: ['work_item_received'] });
+      ids = [];
+      for (const e of received) {
+        const wi = await ctx.repository.load(e.streamId);
+        if (wi && wi.projectId === ctx.project.config.project && !['merged', 'failed', 'cancelled'].includes(wi.state)) ids.push(wi.id);
+      }
+    }
+    let changed = 0;
+    for (const id of ids) {
+      for (const note of await ctx.orchestrator.syncWorkItem(ctx.project, id)) {
+        io.stdout(`${note}\n`);
+        changed++;
+      }
+    }
+    if (changed === 0) io.stdout(`Nothing to update (${ids.length} open work item${ids.length === 1 ? '' : 's'} checked)\n`);
+    else io.stdout('Continue a task sent back with factory resume <task-id>\n');
+    return 0;
+  } finally {
+    await ctx.close();
+  }
+}
+
+async function continueTask(ctx: ProjectContext, io: CliEnv, workItemId: string, taskId: string): Promise<number> {
+  const outcome = await ctx.orchestrator.runTask(ctx.project, workItemId, taskId, (p) => printProgress(io, p));
+  return printOutcome(io, taskId, workItemId, outcome);
+}
+
+async function withTask(
+  positionals: string[],
+  command: string,
+  io: CliEnv,
+  act: (ctx: ProjectContext, wi: WorkItem, task: Task) => Promise<number>,
+): Promise<number> {
+  const [id] = positionals;
+  if (!id || positionals.length > 1) throw new UsageError(`${command} takes one task or work item id`);
+  const ctx = await openProject(io);
+  try {
+    const { wi, task } = await findTarget(ctx.repository, ctx.store, id);
+    if (!task) throw new UsageError(`work item ${wi.id} has ${wi.tasks.length} tasks; name one: ${wi.tasks.map((t) => t.id).join(', ')}`);
+    if (wi.projectId !== ctx.project.config.project) throw new UsageError(`${id} belongs to project ${wi.projectId}; run this inside that project`);
+    return await act(ctx, wi, task);
+  } catch (error) {
+    if (error instanceof Error && !(error instanceof UsageError) && /^task .* (is|has not)/.test(error.message)) throw new UsageError(error.message);
+    throw error;
+  } finally {
+    await ctx.close();
+  }
+}
+
+/** A work item id, or a task id (found by scanning work items: fine at local scale). */
+async function findTarget(repository: WorkItemRepository, store: SqliteStateStore, id: string): Promise<{ wi: WorkItem; task?: Task }> {
+  if (id.startsWith('wi_')) {
+    const wi = await repository.load(id);
+    if (!wi) throw new UsageError(`no work item ${id}`);
+    return { wi, ...(wi.tasks.length === 1 ? { task: wi.tasks[0]! } : {}) };
+  }
+  for (const e of await store.query({ types: ['tasks_planned'] })) {
+    const planned = (e.payload as { tasks?: Array<{ taskId: string }> }).tasks ?? [];
+    if (planned.some((t) => t.taskId === id)) {
+      const wi = await repository.load(e.streamId);
+      const task = wi?.tasks.find((t) => t.id === id);
+      if (wi && task) return { wi, task };
+    }
+  }
+  throw new UsageError(`no task or work item ${id}`);
 }
 
 // --- log ----------------------------------------------------------------------
@@ -258,7 +480,14 @@ function describe(wi: WorkItem): string {
     lines.push(`  ${t.id}  ${t.state}  ${t.title}`);
     if (t.pr) lines.push(`    pr      ${t.pr.url}`);
     if (t.branch) lines.push(`    branch  ${t.branch}`);
-    if (t.lastReason) lines.push(`    reason  ${t.lastReason}`);
+    if (t.lastReason && t.lastReason !== t.evidence?.reason) lines.push(`    reason  ${t.lastReason}`);
+    if (t.reworkLoops + t.gateReworks > 0) lines.push(`    rework  ${t.reworkLoops} from verify, ${t.gateReworks} from the gate (limit ${wi.maxReworkLoops}${t.extraLoops ? ` + ${t.extraLoops} granted` : ''})`);
+    if (t.evidence) {
+      lines.push(`    verify  ${t.evidence.verdict} at ${t.evidence.sha.slice(0, 12)}: ${t.evidence.reason}`);
+      for (const l of evidenceLines(t.evidence)) lines.push(`            ${l}`);
+    }
+    const next = nextStep(t);
+    if (next) lines.push(`    next    ${next}`);
   }
   lines.push('', 'Runs');
   for (const r of wi.runs) lines.push(`  ${r.id}  ${r.station}  ${r.outcome ?? 'running'}  ${r.startedAt}`);
@@ -267,12 +496,29 @@ function describe(wi: WorkItem): string {
   return `${lines.join('\n')}\n`;
 }
 
+function nextStep(t: Task): string | undefined {
+  switch (t.state) {
+    case 'ready':
+      return t.changeApproved ? `merge on the pull request, or factory approve ${t.id} --merge` : `factory approve ${t.id} [--merge], or factory reject ${t.id} --reason "..."`;
+    case 'escalated':
+      return `factory retry ${t.id} [--note "..."]`;
+    case 'queued':
+    case 'rework':
+    case 'verifying':
+      return `factory resume ${t.id}`;
+    default:
+      return undefined;
+  }
+}
+
 // --- setup --------------------------------------------------------------------
 
 interface ProjectContext {
   repoRoot: string;
   project: Project;
   orchestrator: Orchestrator;
+  store: SqliteStateStore;
+  repository: WorkItemRepository;
   close(): Promise<void>;
 }
 
@@ -311,15 +557,20 @@ async function openProject(io: CliEnv): Promise<ProjectContext> {
   } catch (error) {
     throw new UsageError(`cannot set up runtime "${config.adapters.runtime}": ${(error as Error).message}`);
   }
+  const ciEntry = registry.ci[config.adapters.ci];
+  let ci: CI | undefined;
+  if (ciEntry && ciEntry.scm.includes(config.adapters.scm)) ci = ciEntry.create();
+  else if (config.adapters.ci !== 'none') io.stderr(`warning: CI "${config.adapters.ci}" does not build ${config.adapters.scm} repositories; Verify runs without CI\n`);
   const store = new SqliteStateStore({ path: join(home, 'state.db') });
   const orchestrator = new Orchestrator({
     store,
     sourceControl: scmEntry.create(),
     sandbox,
     runtime,
+    ...(ci ? { ci } : {}),
     workRoot: join(home, 'work'),
   });
-  return { repoRoot, project: { repo, config }, orchestrator, close: () => store.close() };
+  return { repoRoot, project: { repo, config }, orchestrator, store, repository: new WorkItemRepository(store), close: () => store.close() };
 }
 
 export function findProjectRoot(from: string): string | undefined {

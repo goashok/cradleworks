@@ -244,7 +244,7 @@ function toReview(raw: RawReview): Review[] {
   return [{ author: { name: login, handle: login }, verdict, body: raw.body ?? '', at: raw.submitted_at }];
 }
 
-function httpError(response: Response, data: unknown, operation: string): AdapterError {
+export function httpError(response: Response, data: unknown, operation: string): AdapterError {
   const detail = describeError(data) || response.statusText || `HTTP ${response.status}`;
   const retryAfter = Number(response.headers.get('retry-after') ?? NaN);
   const rateLimited =

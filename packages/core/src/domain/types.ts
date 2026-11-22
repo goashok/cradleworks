@@ -81,6 +81,54 @@ export interface Task {
   resumeState?: 'building' | 'verifying';
   mergedSha?: string;
   lastReason?: string;
+  /** The latest Verify result, the basis for rework feedback and the change gate. */
+  evidence?: Evidence;
+}
+
+/** What Verify found for one commit of a task (Build spec, section 4). */
+export interface Evidence {
+  /** The verify run that produced it. */
+  runId: string;
+  /** The commit that was verified; a merge is refused if the PR head has moved. */
+  sha: string;
+  checks: CheckResult[];
+  ci: CiResult;
+  review?: ReviewResult;
+  verdict: VerifyVerdict;
+  /** One line, for status and the event log. */
+  reason: string;
+  costUsd: number;
+  verifiedAt: Timestamp;
+}
+
+export type VerifyVerdict = 'pass' | 'rework' | 'escalate';
+
+export interface CheckResult {
+  /** The stack command's name: build, test, lint, or a project-defined one. */
+  name: string;
+  command: string;
+  outcome: 'passed' | 'failed' | 'timed_out' | 'skipped';
+  exitCode?: number;
+  durationMs: number;
+  /** The last lines of output, for rework feedback. */
+  outputTail?: string;
+  /** Passed only when run a second time. */
+  flaky?: boolean;
+}
+
+export interface CiResult {
+  state: 'passed' | 'failed' | 'timed_out' | 'none' | 'not_configured' | 'skipped' | 'error';
+  runs: Array<{ id: string; url: string; state: string; failedJobs: string[] }>;
+  /** Log tails of failed jobs. */
+  failureLogs?: string;
+  note?: string;
+}
+
+export interface ReviewResult {
+  verdict: VerifyVerdict;
+  risk: 'low' | 'medium' | 'high';
+  reasons: string[];
+  model: string;
 }
 
 export type RunOutcome = 'succeeded' | 'failed' | 'stopped' | 'timed_out' | 'limit_reached';

@@ -154,14 +154,14 @@ describe('Build station', () => {
     expect(readdirSync(join(root, 'work', 'wi-00000001'))).toEqual([]);
   });
 
-  it('fails the task when the agent changes nothing', async () => {
+  it('escalates with the agent\'s reason when it changes nothing', async () => {
     const o = orchestrator([{ kind: 'message', text: 'Nothing to do.' }]);
     const { workItemId, taskId } = await submit(o);
     const result = await o.runBuild(project, workItemId, taskId);
-    expect(result).toMatchObject({ outcome: 'failed', reason: 'commit: the agent finished without changing any files' });
+    expect(result).toMatchObject({ outcome: 'declined', reason: 'Nothing to do.' });
     const wi = (await o.getWorkItem(workItemId))!;
-    expect(wi.tasks[0]).toMatchObject({ state: 'failed' });
-    expect(wi.runs[0]).toMatchObject({ outcome: 'failed' });
+    expect(wi.tasks[0]).toMatchObject({ state: 'escalated', lastReason: 'Nothing to do.' });
+    expect(wi.runs[0]).toMatchObject({ outcome: 'succeeded' });
   });
 
   it('fails the task when the agent fails, keeping its error', async () => {

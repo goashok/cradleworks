@@ -90,14 +90,13 @@ hello-node/
 ```console
 $ factory validate
 .: project hello-node, 1 rule file(s), image cradleworks/hello-node-dev:1
-  note: adapter "github-actions" is not built yet (arrives in M2 (CI adapter)); submit does not need it
   note: adapter "github-issues" is not built yet (arrives in M3 (tracker adapter)); submit does not need it
 ok
 ```
 
 `validate` reads `.factory/factory.yaml`, checks every key, confirms the rule files and the image
-exist, and runs nothing. A mistake in the YAML is reported with its line number. The two notes are
-expected: those adapters belong to later milestones.
+exist, and runs nothing. A mistake in the YAML is reported with its line number. The note is
+expected: issue intake belongs to a later milestone.
 
 ## 5. Submit the task
 
@@ -118,10 +117,21 @@ Building task_6dca1aa4-a379-46e7-a332-6455cc07b57a...
 Opened file:///Users/you/hello-node-remote.git#pull-1
   branch factory/task-6dca1aa4
   run    run_d4d34200-fdee-4953-b359-b8ee165d94f8
+Verifying...
+  checks: build ✓, test ✓   CI: not configured   reviewer: pass (low risk)
+    - `farewell` is implemented as specified, with a doc comment and a test that follows the project conventions.
+Passed: checks passed, CI not configured, reviewer passed (low risk)
+  run    run_c5131ffe-a082-4d5b-9572-4db3512f5c05
+Ready for review: file:///Users/you/hello-node-remote.git#pull-1
+  approve with  factory approve task_6dca1aa4-a379-46e7-a332-6455cc07b57a [--merge]
+  or send back  factory reject task_6dca1aa4-a379-46e7-a332-6455cc07b57a --reason "..."
 ```
 
-That run took about 10 seconds and cost $0.014. Tasks on real projects usually take one to three
-minutes.
+Two runs happened. **Build**: an agent wrote the change in a sandbox and opened the PR. **Verify**:
+in a fresh sandbox, the factory ran the build and test commands on the pushed branch, and a second
+agent reviewed the diff. If either had found a problem, the task would have gone back to the
+agent with the reasons, and the fix would have landed on the same PR. The whole thing took about
+20 seconds and cost under $0.03. Tasks on real projects usually take two to five minutes.
 
 ## 6. Look at what it did
 
@@ -175,12 +185,24 @@ input and output in full.
 ```console
 $ factory status
 WORK ITEM                                STATE        TASKS  PROJECT     TITLE
-wi_5eb83867-b216-4ed4-ae28-57e85860a243  in_progress  0/1    hello-node  Add a farewell function
+wi_5eb83867-b216-4ed4-ae28-57e85860a243  awaiting_change_approval  0/1    hello-node  Add a farewell function
 ```
 
-`in_progress, 0/1` is correct: the PR is open but not merged. In today's version, a human reviews
-and merges every PR. `factory status <work-item-id>` shows the task, its PR, its runs and the
-recorded gate decisions.
+It's waiting for you at the change gate. `factory status <work-item-id>` shows the task, its PR,
+the evidence from Verify, its runs and the recorded gate decisions.
+
+## 7. Approve and merge
+
+```console
+$ factory approve task_6dca1aa4-a379-46e7-a332-6455cc07b57a --merge
+Approved and merged 401089b49d43
+$ git pull -q && git log --oneline -1
+401089b Add a farewell function (#1)
+```
+
+Or send it back with what to change, and watch the rework:
+`factory reject <task-id> --reason "Also export it from index.js"`. See
+[Verify, rework and approve](guides/verify-and-approve.md).
 
 ## Clean up
 
@@ -194,6 +216,6 @@ to keep experiments separate.
 
 ## Next
 
-- [How it works](how-it-works.md): what happened in those ten seconds, and why it's built this way
+- [How it works](how-it-works.md): what happened in those twenty seconds, and why it's built this way
 - [Add your own project](guides/add-a-project.md): your repo, your image, your rules, real GitHub PRs
 - [Write good tasks](guides/writing-tasks.md): get better results from the agent

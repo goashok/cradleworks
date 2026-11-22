@@ -52,7 +52,7 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
     case 'run_started':
       return line('run', `started ${String(p.station ?? '')}`.trim());
     case 'run_context':
-      return line('run', `${String(p.station ?? '')} for ${String(p.taskId ?? '')} (${String(p.workItemId ?? '')})`);
+      return line('run', `${String(p.station ?? '')} for ${String(p.taskId ?? '')} (${String(p.workItemId ?? '')})${Number(p.attempt) > 1 ? `, attempt ${String(p.attempt)}` : ''}`);
     case 'checkout_cloned':
       return line('checkout', `${String(p.repo ?? '')} → ${String(p.path ?? '')}`);
     case 'sandbox_created': {
@@ -80,6 +80,28 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
       return line('run', `ended ${String(p.outcome ?? '')}${p.reason ? `: ${String(p.reason)}` : ''}`);
     case 'sandbox_destroyed':
       return line('sandbox', `${String(p.sandboxId ?? '')} destroyed`);
+    case 'check_ran': {
+      const secs = (Number(p.durationMs ?? 0) / 1000).toFixed(1);
+      const head = `${String(p.name)} ${String(p.outcome)}${p.flaky ? ' (flaky: passed on a second run)' : ''} in ${secs}s: ${String(p.command)}`;
+      return p.outputTail && full ? line('check', `${head}\n${String(p.outputTail)}`) : line('check', head);
+    }
+    case 'review_decided': {
+      const reasons = (p.reasons as string[] | undefined) ?? [];
+      const head = `${String(p.verdict)}, ${String(p.risk)} risk (${String(p.model)})`;
+      return line('review', full && reasons.length ? `${head}\n${reasons.map((r) => `- ${r}`).join('\n')}` : `${head}${reasons[0] ? `: ${oneLine(reasons[0], false)}` : ''}`);
+    }
+    case 'ci_checked': {
+      const runs = (p.runs as Array<{ state: string; url: string }> | undefined) ?? [];
+      return line('ci', `${String(p.state)}${p.note ? ` (${String(p.note)})` : ''}${runs.length ? `: ${runs.map((r) => `${r.state} ${r.url}`).join(', ')}` : ''}`);
+    }
+    case 'evidence':
+      return line('verdict', `${String(p.verdict)}: ${String(p.reason)} @ ${String(p.sha ?? '').slice(0, 12)}`);
+    case 'evidence_posted':
+      return line('evidence', `posted ${String(p.url)}`);
+    case 'evidence_not_posted':
+      return line('evidence', `not posted: ${String(p.error)}`);
+    case 'task_declined':
+      return line('declined', oneLine(String(p.reason), full));
     default:
       return line(event.type, oneLine(JSON.stringify(p), full));
   }
