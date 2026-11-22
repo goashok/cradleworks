@@ -225,11 +225,13 @@ export class Orchestrator {
     ]);
     await log.write({ type: 'run_context', workItemId, taskId, station: 'build', attempt });
 
-    const checkoutDir = join(this.#deps.workRoot, shortId(workItemId), shortId(taskId));
+    // A new folder per run, never a reused or recreated one: Docker Desktop's file sharing can
+    // keep a stale view of a deleted folder (and everything under it) that a container mounted,
+    // so a rework at the old path fails with "bind source path does not exist".
+    const checkoutDir = join(this.#deps.workRoot, shortId(workItemId), `${shortId(taskId)}-${shortId(runId)}`);
     let sandbox: SandboxHandle | undefined;
     let step = 'clone';
     try {
-      rmSync(checkoutDir, { recursive: true, force: true });
       mkdirSync(checkoutDir, { recursive: true });
       const checkout = await this.#deps.sourceControl.clone(project.repo, join(checkoutDir, 'source'), { ref: base });
       await log.write({ type: 'checkout_cloned', path: checkout.path, repo: project.repo.id });
@@ -342,13 +344,15 @@ export class Orchestrator {
     wi = await this.#repo.append(wi, [{ type: 'run_started', at: this.#clock(), runId, subjectId: taskId, station: 'verify', agentProfile: profile }]);
     await log.write({ type: 'run_context', workItemId, taskId, station: 'verify', attempt });
 
-    const checkoutDir = join(this.#deps.workRoot, shortId(workItemId), `${shortId(taskId)}-verify`);
+    // A new folder per run, never a reused or recreated one: Docker Desktop's file sharing can
+    // keep a stale view of a deleted folder (and everything under it) that a container mounted,
+    // so a rework at the old path fails with "bind source path does not exist".
+    const checkoutDir = join(this.#deps.workRoot, shortId(workItemId), `${shortId(taskId)}-${shortId(runId)}`);
     const ciAbort = new AbortController();
     let sandbox: SandboxHandle | undefined;
     let step = 'clone';
     let cost = 0;
     try {
-      rmSync(checkoutDir, { recursive: true, force: true });
       mkdirSync(checkoutDir, { recursive: true });
       const checkout = await this.#deps.sourceControl.clone(project.repo, join(checkoutDir, 'source'), { ref: base });
       await log.write({ type: 'checkout_cloned', path: checkout.path, repo: project.repo.id });

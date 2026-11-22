@@ -77,7 +77,7 @@ rejection counts against `max_rework_loops`.
 
 ## `factory retry <id>`
 
-Gives an `escalated` (or failed) task more attempts and carries on.
+Gives an `escalated` task more attempts and carries on. A `failed` task (its build broke) is final: submit the task again.
 
 | Option | Meaning |
 | --- | --- |

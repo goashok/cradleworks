@@ -146,6 +146,11 @@ describe('Verify station', () => {
     const wi = (await o.getWorkItem(workItemId))!;
     const task = wi.tasks[0]!;
     expect(task.reworkLoops).toBe(1);
+    // Every run clones into a folder of its own (Docker Desktop can't remount a recreated one).
+    const clonedAt: string[] = [];
+    for (const run of wi.runs) for (const e of await store.readStream(run.id)) if (e.type === 'checkout_cloned') clonedAt.push((e.payload as { path: string }).path);
+    expect(clonedAt).toHaveLength(4);
+    expect(new Set(clonedAt).size).toBe(4);
     const log = (await git(['--git-dir', bare, 'log', '--format=%s', `refs/heads/${task.branch}`])).stdout;
     expect(log.trim().split('\n').slice(0, 2)).toEqual(['Add fixed.txt (rework 1)', 'Add fixed.txt']);
     expect(scm.commentsOn(task.pr!).map((c) => c.split('\n')[0])).toEqual([
