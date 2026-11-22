@@ -34,6 +34,8 @@ export const SANDBOX_LABEL = 'dev.cradleworks.sandbox';
 const EXEC_MARKER = 'CRADLEWORKS_EXEC';
 const PROXY_ALIAS = 'egress-proxy';
 const PROXY_PORT = 3128;
+/** Maven's resolver ignores Java's proxy properties, so it gets a settings file naming the proxy. */
+const MAVEN_SETTINGS = '/etc/cradleworks/maven-settings.xml';
 /** Stock Node image the egress proxy runs in. */
 export const DEFAULT_PROXY_IMAGE = 'node:22.11.0-alpine3.20';
 const PROXY_SCRIPT = fileURLToPath(new URL('./egress-proxy.mjs', import.meta.url));
@@ -81,6 +83,7 @@ export class DockerSandbox implements Sandbox {
   readonly #docker: string;
   readonly #options: DockerSandboxOptions;
   readonly #entries = new Map<string, Entry>();
+  readonly #mavenSettings: string;
 
   constructor(options: DockerSandboxOptions) {
     this.#options = options;
@@ -90,6 +93,9 @@ export class DockerSandbox implements Sandbox {
     // macOS's /var → /private/var so the paths we mount are the real ones.
     this.#root = realpathSync(this.#root);
     this.#docker = options.docker ?? findDocker();
+    this.#mavenSettings = join(this.#root, '.tools', 'maven-settings.xml');
+    mkdirSync(dirname(this.#mavenSettings), { recursive: true });
+    writeFileSync(this.#mavenSettings, mavenSettings());
   }
 
   /** True if the docker CLI is installed and its engine answers. */
@@ -143,6 +149,8 @@ export class DockerSandbox implements Sandbox {
         `type=bind,source=${join(workspacePath, '.git')},target=${WORKSPACE}/.git,readonly`,
         '--mount',
         `type=bind,source=${gitDir},target=${gitDir},readonly`,
+        '--mount',
+        `type=bind,source=${this.#mavenSettings},target=${MAVEN_SETTINGS},readonly`,
         '--workdir',
         WORKSPACE,
         ...(resources.cpus !== undefined ? ['--cpus', String(resources.cpus)] : []),
@@ -155,6 +163,7 @@ export class DockerSandbox implements Sandbox {
       ];
       const started = await this.#run(args, 'create', { timeoutMs: 10 * 60_000 });
       if (started.exitCode !== 0) throw dockerFailure('create', started, spec.image);
+      await this.#registerUser(container);
     } catch (error) {
       await this.#removeContainer(container);
       if (egress) await this.#stopEgress(egress);
@@ -172,6 +181,23 @@ export class DockerSandbox implements Sandbox {
       ...(egress ? { egress } : {}),
     });
     return { ...handle };
+  }
+
+  /**
+   * The container runs as the host uid, which the image's /etc/passwd usually lacks; tools
+   * that look up the current user (Postgres's initdb, ssh, some JVM and git paths) then fail.
+   * Adds an entry as root right after start. Root needs no capability for this: it owns the
+   * files. Best effort: an image with a read-only /etc still works for everything else.
+   */
+  async #registerUser(container: string): Promise<void> {
+    const uid = process.getuid?.();
+    const gid = process.getgid?.();
+    if (uid === undefined || gid === undefined || uid === 0) return;
+    const script = [
+      `awk -F: -v id=${uid} '$3 == id { found = 1 } END { exit !found }' /etc/passwd || echo 'cradleworks:x:${uid}:${gid}:Cradleworks sandbox:/tmp:/bin/sh' >> /etc/passwd`,
+      `awk -F: -v id=${gid} '$3 == id { found = 1 } END { exit !found }' /etc/group || echo 'cradleworks:x:${gid}:' >> /etc/group`,
+    ].join('; ');
+    await this.#run(['exec', '--user', '0:0', container, 'sh', '-c', script], 'create', { timeoutMs: 30_000 });
   }
 
   async exec(sandbox: SandboxHandle, command: string[], options: ExecOptions = {}): Promise<ExecResult> {
@@ -463,7 +489,16 @@ function proxyEnv(): Record<string, string> {
     NO_PROXY: noProxy,
     no_proxy: noProxy,
     JAVA_TOOL_OPTIONS: `-Dhttp.proxyHost=${PROXY_ALIAS} -Dhttp.proxyPort=${PROXY_PORT} -Dhttps.proxyHost=${PROXY_ALIAS} -Dhttps.proxyPort=${PROXY_PORT} -Dhttp.nonProxyHosts=localhost|127.0.0.1`,
+    // Maven 3.9+ adds MAVEN_ARGS to every command line. Global settings, so a project's own
+    // ~/.m2/settings.xml still applies on top.
+    MAVEN_ARGS: `--global-settings ${MAVEN_SETTINGS}`,
   };
+}
+
+function mavenSettings(): string {
+  const proxy = (protocol: string) =>
+    `    <proxy><id>cradleworks-${protocol}</id><active>true</active><protocol>${protocol}</protocol><host>${PROXY_ALIAS}</host><port>${PROXY_PORT}</port><nonProxyHosts>localhost|127.0.0.1</nonProxyHosts></proxy>`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!-- Written by Cradleworks: routes Maven through the sandbox's egress proxy. -->\n<settings>\n  <proxies>\n${proxy('https')}\n${proxy('http')}\n  </proxies>\n</settings>\n`;
 }
 
 function checkStarted(entry: Entry, command: string[], result: RunResult, operation: string): void {

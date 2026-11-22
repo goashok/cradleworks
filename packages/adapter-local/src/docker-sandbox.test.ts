@@ -125,6 +125,14 @@ describe.skipIf(!haveDocker)('DockerSandbox', () => {
       expect(dockerOut(['ps', '--all', '--quiet', '--filter', `name=^${adapter.containerOf(s)}-egress$`])).toBe('');
     });
 
+    it('points Maven at the proxy, since its resolver ignores Java proxy properties', async () => {
+      const s = await create({ network: { mode: 'allowlist', allow: ['example.com'] } });
+      const r = await sh(s, 'echo "$MAVEN_ARGS"; grep -c "<host>egress-proxy</host>" /etc/cradleworks/maven-settings.xml');
+      expect(r.stdout.trim().split('\n')).toEqual(['--global-settings /etc/cradleworks/maven-settings.xml', '2']);
+      const offline = await create();
+      expect((await sh(offline, 'echo "[$MAVEN_ARGS]"')).stdout.trim()).toBe('[]');
+    });
+
     it('refuses a malformed allow-list entry', async () => {
       await expectAdapterError(create({ network: { mode: 'allowlist', allow: ['https://example.com/path'] } }), 'invalid_input');
     });
@@ -155,6 +163,16 @@ describe.skipIf(!haveDocker)('DockerSandbox', () => {
       if (process.getuid) expect(uid).toBe(String(process.getuid()));
       expect(caps).toMatch(/CapEff:\s+0+$/);
       if (process.getuid) expect(execFileSync('stat', process.platform === 'darwin' ? ['-f', '%u', join(s.workspacePath, 'owned.txt')] : ['-c', '%u', join(s.workspacePath, 'owned.txt')], { encoding: 'utf8' }).trim()).toBe(String(process.getuid()));
+    });
+
+    it('gives the host uid a passwd entry, so tools that look up the current user work', async () => {
+      const s = await create();
+      const r = await sh(s, `id -un; awk -F: -v id="$(id -u)" '$3 == id { print $6 }' /etc/passwd; test -w /etc/passwd && echo writable || echo locked`);
+      const [name, home, writable] = r.stdout.trim().split('\n');
+      expect(r.exitCode).toBe(0);
+      expect(name).toMatch(/^[a-z_][a-z0-9_-]*$/);
+      if (process.getuid && process.getuid() !== 0) expect(home).toBe('/tmp');
+      expect(writable).toBe('locked');
     });
 
     it('resolves copy paths inside the container, so a planted symlink cannot reach the host', async () => {
