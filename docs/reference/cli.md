@@ -10,6 +10,9 @@ factory retry <id> [--loops <n>] [--note <text>] [--no-run]
 factory resume <id>
 factory sync [<id>]
 factory cancel <id> [--reason <text>]
+factory budget [<user>]
+factory budget extend <id> [--usd <n>] [--no-run]
+factory budget extend --user <name> --usd <n> [--month]
 factory validate [<dir>]
 factory log <run-id|work-item-id> [--full] [--json]
 factory help
@@ -134,6 +137,23 @@ work item of the project. It doesn't start any runs.
 
 Cancels the work item. Its pull requests stay open. `--reason` is stored.
 
+## `factory budget`
+
+`factory budget [<user>]` shows what a requester (default: your git user) has spent today and
+this month, UTC, against `per_user_daily_usd` and `per_user_monthly_usd`, with any extensions
+granted, and the per-task cap.
+
+`factory budget extend <id> [--usd <n>]` raises a paused task's cap by `n` dollars (default 0,
+for when it was the requester's cap that stopped it) and carries on with the task in the
+foreground; `--no-run` only records it. A build cut off by its budget builds again; a verify
+carries on where it stopped.
+
+`factory budget extend --user <name> --usd <n> [--month]` raises a requester's daily cap (or
+monthly, with `--month`) by `n` dollars for the current day or month only. Paused tasks then
+need `factory budget extend <id>` to carry on.
+
+Every extension is an event with who made it, and shows in `factory status`.
+
 ## `factory status [<work-item-id>]`
 
 Without an id, it lists every work item, newest first, with its state, merged and total tasks,
@@ -142,7 +162,8 @@ project and title.
 With an id, it shows the work item in detail. For work from an issue, that starts with the issue
 link, the base branch, why it's blocked, the questions asked, the spec version and whether it's
 approved, and the proposed plan. Then come its tasks (state, PR, branch, reason, rework
-attempts, the latest Verify evidence, and the next command to run), its runs (station, outcome,
+attempts, spend so far, any protected files it changes, the latest Verify evidence, and the next
+command to run), the work item's total spend, its runs (station, outcome,
 start time) and its gate decisions (gate, verdict, mode, who).
 
 ## `factory validate [<dir>]`

@@ -11,15 +11,15 @@ isn't yet.
  your machine (host)                          sandbox (one per task)
  ────────────────────                         ─────────────────────────────
  factory CLI                                  Docker container from stack.image
- GitHub token ── clone / commit / push / PR   /workspace  = the task's git worktree
+ GitHub token ── clone / scan / push / PR     /workspace  = the task's git worktree
  event log (~/.cradleworks/state.db)          agent (claude) + your toolchain
-                                              model credential (env var, this run only)
+ hard rules, budgets, secret scan             a placeholder, not the model credential
                  internal Docker network, no route out
                               │
                               ▼
                      egress proxy (per sandbox) ── allow-list ──► registry.npmjs.org
-                                                                  api.anthropic.com
-                                                                  (nothing else)
+                       │ holds the model credential               (nothing else)
+                       └── credential gateway ── HTTPS ─────────► api.anthropic.com
 ```
 
 ## What's enforced today
@@ -53,15 +53,58 @@ apart from the model API.
 
 **No GitHub credentials in the sandbox.** Cloning, committing, pushing and opening the PR happen on
 the host, with your token, after the agent's process has ended. The agent can change files. It
-can't push, merge or touch any other repository.
+can't push, merge or touch any other repository. With a [GitHub App](github-app.md) the factory
+uses its own hour-long, repo-scoped tokens instead of yours.
 
-**Credentials out of the logs.** The model credential reaches the agent as an environment variable
-for that run only (`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`). It's scrubbed from every
-logged event. Cradleworks reads it from the environment or the macOS Keychain, and never writes
-it to disk.
+**No model credential in the sandbox either.** The agent talks to the model API through a
+gateway on its sandbox's egress proxy. The agent holds a placeholder; the proxy sets the real
+API key or subscription token on each request and forwards it over HTTPS. The credential is in a
+file (mode 0600) that only the proxy container mounts. It's scrubbed from every logged event, and
+Cradleworks reads it from the environment or the macOS Keychain and writes it nowhere else.
+(With a sandbox that has no proxy, such as the process sandbox used in tests, the credential
+goes in the agent's environment instead.)
 
-**Limits on every run.** 30 minutes of wall-clock time, and `budgets.per_task_usd` of model spend,
-enforced by the agent runtime. Token counts and cost are recorded on every run.
+**Hard rules no config can turn off.**
+
+- The factory pushes only its own `factory/*` branches, force-pushes only a branch it created
+  with no PR yet, deletes no branch, and merges only into the work's base branch.
+- A change to CI config (`.github/`, `.gitlab-ci.yml`, `.gitlab/`, `.circleci/`, `Jenkinsfile`,
+  `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.buildkite/`, `.travis.yml`, `.drone.yml`),
+  to `.factory/` or to a `CODEOWNERS` file waits for a person at the change gate, even with
+  `change_approval: ai` or `skip`, and is never merged automatically: someone has to run
+  `factory approve --merge` or merge the PR. `protected_paths` in factory.yaml adds paths; it
+  can't remove these. `factory status` lists the protected files a task changed, and the PR
+  says so in a comment. (The approved spec the factory itself writes under `.factory/specs/`
+  doesn't count, unless the agent edited it.)
+
+**A secret scan before every push.** What the run added is scanned for private keys, passwords in
+URLs, the token formats of the common hosted services, and files that hold secrets by
+convention (`.env`, `*.pem`, `id_rsa`, `.netrc` and the like; `.env.example` is fine). A hit
+escalates the task and nothing is pushed. The reason names the file, line and kind of secret,
+never the value.
+
+**Commands agents may not run.** `git push`, `git remote`, git credential helpers, `gh`, `ssh`,
+`scp`, `sftp` and `rsync` are refused on every agent run, plus anything in
+`sandbox.commands.deny`. Each refusal is in the run log and `factory log`. This is a second
+line: the sandbox has no credentials and no route to a git host anyway.
+
+**Every network decision in the run log.** When a sandbox is torn down, everything its proxy
+allowed or refused (tunnels, plain HTTP, gateway requests) is written to the run log.
+`factory log <run>` shows the counts and each refusal; `--full` shows every decision.
+
+**Limits on every run, and budgets across them.** 30 minutes of wall-clock time per run. Model
+spend is recorded for every agent run, and each run gets only what's left under every cap that
+applies:
+
+- `budgets.per_task_usd` covers **all attempts of a task together**: builds, reworks, the
+  reviewer and the tester. Spec, plan and check runs for a work item each get the same cap.
+- `budgets.per_user_daily_usd` and `per_user_monthly_usd` cover everything one requester asked
+  for, per UTC day (from midnight) and month (from the 1st).
+
+At a cap the task pauses (`budget_exceeded`), or the work item blocks if it hadn't reached a
+task yet; nothing is lost. `factory budget` shows spend against the caps, and
+`factory budget extend` raises a cap and carries on. Every extension is recorded with who made
+it.
 
 **A quiet agent.** Inside the sandbox, Claude Code runs with telemetry, error reporting, auto-update
 and non-essential traffic turned off. It keeps no session, and with an API key it skips any user
@@ -71,21 +114,21 @@ settings, hooks and plugins.
 
 Be clear about these before you point the factory at something sensitive:
 
-- **The model credential is inside the sandbox.** Code in the sandbox could read it and send it to
-  an allowed host. Use an API key that has a spend limit on the provider account.
-- **Containers are not VMs.** The sandbox shares your machine's kernel (on macOS, Docker Desktop's
-  VM). Microvm sandboxes are planned for evaluation in M4.
-- **No hard-deny list yet.** The planned guardrails, which no config will be able to override (no
-  force-push to protected branches, no changes to CI or `.factory/` without a human gate, no
-  touching secrets), arrive in M4. Today the agent can edit any file in the repo, including CI
-  workflows and `.factory/`, and you see that in the PR.
-- **No per-command allow and deny lists yet** (M4). Inside the sandbox the agent's tool
-  permissions are bypassed on purpose: the sandbox is the boundary.
-- **No per-user budgets yet** (M4). Only the per-task cap is enforced.
-- **The GitHub token is yours.** v1 uses `GITHUB_TOKEN` or your `gh` login. Short-lived,
-  repo-scoped tokens from a GitHub App are planned.
-- **Proxy decisions aren't in the run log yet.** The proxy records every allow and deny, but the
-  run log doesn't include them yet.
+- **Containers are not VMs.** The sandbox shares a kernel with the machine (on macOS, Docker
+  Desktop's VM, which also runs the egress proxy that holds the model credential). A kernel
+  escape would reach that. See [MicroVM sandboxes](../design/microvm-sandboxes.md) for the
+  options and what we'd do first.
+- **The model credential can still be used from inside.** The agent can't read it, but it can
+  send requests through the gateway while its run lasts. The budgets cap what that costs.
+- **The secret scan knows formats, not intent.** It catches keys and tokens with a recognisable
+  shape and secret-holding files. A password in a plain variable (`password = "hunter2"`)
+  passes. Keep real secrets out of the repository and the sandbox.
+- **The command deny list matches leading words.** It's enforced by the agent runtime, so a
+  command run some other way (a script that calls `git push`) isn't refused there; it fails for
+  lack of credentials and network instead.
+- **Branch protection is still yours to set.** The hard rules keep the factory to its own
+  branches, but require a review on `main` in GitHub too, so a merge needs a person whatever
+  the factory's settings.
 
 **Keep the human change gate.** Verify catches failing checks and a lot of what a reviewer would
 flag, but it is another agent. `change_approval: human` and `auto_merge: false` are the

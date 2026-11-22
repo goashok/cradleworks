@@ -85,13 +85,18 @@ Each line is one event: the time, what happened, and the detail.
 | `sandbox … network allowlist: …` | the container, its branch, and every host it could reach |
 | `context` | the rule files the agent was given (and any dropped for size) |
 | `agent … limits 1800s / $5.0000` | the agent, model, and the wall-clock and spend limits |
+| `budget_stopped` | the run didn't start: a spend cap is used up (which one, and how much was spent) |
+| `✗ denied shell` | a command the agent wasn't allowed to run, refused |
 | `→ Read`, `→ Bash`, `→ Edit` … | a tool call by the agent |
 | `←` / `← error` | the result of that call |
 | `says` | the agent's messages |
 | `file modified src/x.ts` | a file the agent changed |
 | `agent succeeded; N in / M out tokens, $X` | the run's total usage and cost |
 | `summary` | the agent's closing summary (also in the PR body) |
+| `secrets_found` | the secret scan's hits (file, line, kind; never the value); nothing was pushed |
+| `protected_paths_changed` | protected files the change touches; the task will wait for a person |
 | `commit`, `push`, `pr` | what the factory did with the result |
+| `network N allowed, M denied` | the sandbox proxy's decisions, with each refusal (`--full`: all of them) |
 | `step_failed` | the step that failed and why |
 | `sandbox … destroyed` | cleanup, which always happens |
 
@@ -108,6 +113,8 @@ Find the failing step in `factory status <work-item>` or at the end of `factory 
 | `sandbox` | image missing, or Docker not running | `docker image ls`; `factory validate` |
 | `agent` | the agent stopped: a time or spend limit, or an error | the last `says` and `← error` lines |
 | (declined) | the agent decided not to change anything; the task escalates | its `summary`, which says why |
+| `scan` | the secret scan found something; nothing was pushed | the `secrets_found` line; remove the secret and `factory retry` |
+| (paused for budget) | a spend cap is used up; the task waits | `factory budget`; `factory budget extend <task>` |
 | `push` / `pr` | no permission to push, or a PR for that branch already exists | the token's scopes; open PRs |
 
 A failed **build** run fails the task: submit it again, which makes a new work item with fresh

@@ -76,13 +76,14 @@ because you wrote the spec. See [From an issue to merged PRs](../guides/issues.m
 
 | Key | Type | Default | Status | Meaning |
 | --- | --- | --- | --- | --- |
-| `per_task_usd` | number > 0 | `5` | ✅ | The spend limit for one agent run. The agent stops when it's reached. |
+| `per_task_usd` | number > 0 | `5` | ✅ | The spend limit for one task over all its attempts: builds, reworks, reviewer and tester together. Each spec, plan and check run for a work item gets the same cap. At the cap the task pauses; `factory budget extend` raises it. |
 | `max_rework_loops` | integer ≥ 0 | `3` | ✅ | Verify → Build loops (and gate rejections) before a task escalates to a human. Recorded on each work item. |
-| `per_user_daily_usd` | number > 0 | none | ⏳ M4 | Daily spend cap per requester. |
-| `per_user_monthly_usd` | number > 0 | none | ⏳ M4 | Monthly spend cap per requester. |
+| `per_user_daily_usd` | number > 0 | none | ✅ | Spend cap per requester per UTC day, over everything they asked for. |
+| `per_user_monthly_usd` | number > 0 | none | ✅ | Spend cap per requester per calendar month (UTC). |
 
-Each Build run also has a fixed 30-minute wall-clock limit, and each spec, plan, check and tester
-run a 15-minute one.
+Each agent run gets only what's left under every cap that applies. Each Build run also has a fixed
+30-minute wall-clock limit, and each spec, plan, check and tester run a 15-minute one. The
+requester is whoever opened the issue, or the git user for `factory submit`.
 
 ## `sandbox.network` (required, defaults provided)
 
@@ -94,6 +95,12 @@ run a 15-minute one.
 The agent runtime's own hosts, such as `api.anthropic.com`, are added for each run automatically.
 Don't list them yourself.
 
+## `sandbox.commands` (required, defaults provided)
+
+| Key | Values | Default | Status | Meaning |
+| --- | --- | --- | --- | --- |
+| `deny` | list of commands | `[]` | ✅ | More commands agents may not run, by leading words (`curl` refuses `curl https://…`). Always denied as well: `git push`, `git remote`, `git config credential`, `git credential`, `gh`, `ssh`, `scp`, `sftp`, `rsync`. |
+
 ## Other keys
 
 | Key | Values | Default | Status | Meaning |
@@ -102,6 +109,7 @@ Don't list them yourself.
 | `concurrency` | integer ≥ 1 | `2` | ✅ | How many of a work item's tasks may build and verify at once, and how many work items `factory watch` moves at once. `submit` builds its one task. |
 | `verify.tester` | boolean | `true` | ✅ | For work from issues: a tester agent writes acceptance tests from the spec, and Verify runs them as the `acceptance` check. |
 | `related_repos` | list of paths | `[]` | ✅ | Other checkouts, as paths from this repo, that the planner may give tasks to. Each needs its own `.factory/factory.yaml` and the same `scm`. |
+| `protected_paths` | list of paths | `[]` | ✅ | More paths whose changes need a person at the change gate and are never merged automatically. A trailing `/` means everything under it. CI config, `.factory/` and `CODEOWNERS` are always protected; this can't remove them. |
 
 ## Environment variables
 
@@ -112,6 +120,8 @@ Don't list them yourself.
 | `ANTHROPIC_API_KEY` | The API key for Claude Code. Keychain fallback: service `cradleworks-anthropic-api-key`. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | The subscription token from `claude setup-token`. Keychain fallback: service `cradleworks-claude-oauth-token`. |
 | `CRADLEWORKS_CLAUDE_AUTH` | Set to `subscription` to prefer the subscription token when both are present. |
+| `CRADLEWORKS_GITHUB_APP_ID`, `CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE` | Use a GitHub App's short-lived tokens instead of `GITHUB_TOKEN`. See [GitHub App tokens](../guides/github-app.md). |
+| `CRADLEWORKS_GITHUB_APP_INSTALLATION_ID`, `CRADLEWORKS_GITHUB_APP_REPOSITORIES` | Optional, with the app: which installation, and which repositories (comma-separated names) tokens may see. |
 
 ## A complete example
 
