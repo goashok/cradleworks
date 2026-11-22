@@ -86,19 +86,21 @@ describe('hard rules in a build', () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
+  let store: InMemoryStateStore;
   function orchestrator(writes: ScriptStep[]) {
+    store = new InMemoryStateStore();
     const pass: ScriptStep = { kind: 'message', text: '```json\n{"verdict":"pass","risk":"low","reasons":["Fine."]}\n```' };
     const runtime = new ScriptedAgentRuntime((req: AgentRunRequest) => (req.profile.role === 'reviewer' ? [pass] : [...writes, { kind: 'message', text: 'Done.' }]));
     let ids = 0;
     return new Orchestrator({
-      store: new InMemoryStateStore(),
+      store,
       sourceControl: new LocalGitSourceControl(),
       sandbox: new ProcessSandbox(join(root, 'sandboxes')),
       runtime,
       workRoot: join(root, 'work'),
       newId: (kind) => `${kind}_${String(++ids).padStart(8, '0')}`,
       ciWait: { appearSeconds: 0, finishSeconds: 1, pollSeconds: 0 },
-      hardRules: { protectedPaths: ['ci/'] },
+      hardRules: { protectedPaths: ['ci/'], deniedCommands: ['git push', 'ssh'] },
     });
   }
   const branches = () => execFileSync('git', ['--git-dir', bare, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' }).split('\n').filter(Boolean);
@@ -114,6 +116,22 @@ describe('hard rules in a build', () => {
     expect(await o.approveTask(project, workItemId, taskId, { by: 'sam' })).toEqual({});
     expect((await o.runTask(project, workItemId, taskId)).state).toBe('ready');
     expect((await o.approveTask(project, workItemId, taskId, { by: 'sam', merge: true })).merged).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it('refuses denied commands on every run, and logs each refusal', async () => {
+    const withDeny = { ...project, config: { ...config, commands: { deny: ['curl'] } } };
+    const o = orchestrator([
+      { kind: 'command', command: 'git push origin main' },
+      { kind: 'command', command: 'curl https://example.com' },
+      { kind: 'command', command: 'git status' },
+      { kind: 'write', path: 'notes.md', content: 'hi\n' },
+    ]);
+    const { workItemId, taskId } = await o.submitTask({ project: withDeny, title: 'Add notes', body: 'Write them.', requester: 'alex' });
+    await o.runTask(withDeny, workItemId, taskId);
+    const wi = (await o.getWorkItem(workItemId))!;
+    const build = wi.runs.find((r) => r.station === 'build')!;
+    const denied = (await store.readStream(build.id)).filter((e) => e.type === 'command_denied').map((e) => (e.payload as { detail: string }).detail);
+    expect(denied).toEqual(['git push origin main', 'curl https://example.com']);
   });
 
   it('pushes nothing when the change adds a secret, and says where without quoting it', async () => {

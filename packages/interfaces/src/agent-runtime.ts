@@ -18,6 +18,11 @@ export interface ToolPolicy {
   allow: string[];
   /** Always refused, even if allowed above. */
   deny: string[];
+  /**
+   * Shell commands the agent may not run, by leading words (`git push` refuses
+   * `git push origin main`). The runtime refuses them and reports each as a `denied` event.
+   */
+  commands?: string[];
 }
 
 export interface AgentRunRequest {

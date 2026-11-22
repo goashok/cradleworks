@@ -80,7 +80,7 @@ export interface OrchestratorDeps {
    * More hard rules than the core's neutral ones: CI config files that are protected, and
    * known token formats for the secret scan. Projects can add to these, never remove them.
    */
-  hardRules?: { protectedPaths?: readonly string[]; secretPatterns?: readonly SecretPattern[] };
+  hardRules?: { protectedPaths?: readonly string[]; secretPatterns?: readonly SecretPattern[]; deniedCommands?: readonly string[] };
   /** Where requests come from and where the factory reports back; absent = CLI only. */
   tracker?: Tracker;
   /** Default: specs in the factory's event log. */
@@ -1353,10 +1353,14 @@ export class Orchestrator {
     }
     const asked = request.limits.maxSpendUsd ?? Infinity;
     const cap = Math.min(asked, budget.allowedUsd);
-    const run = await this.#deps.runtime.start({ ...request, limits: { ...request.limits, maxSpendUsd: cap } });
+    // Commands no agent may run: the built-in ones and the project's own, on every run.
+    const commands = [...new Set([...(request.tools.commands ?? []), ...(this.#deps.hardRules?.deniedCommands ?? []), ...(charge.project.config.commands?.deny ?? [])])];
+    const tools = commands.length ? { ...request.tools, commands } : request.tools;
+    const run = await this.#deps.runtime.start({ ...request, tools, limits: { ...request.limits, maxSpendUsd: cap } });
     let done: Extract<AgentEvent, { type: 'done' }> | undefined;
     for await (const event of run.events) {
       await log.write({ type: 'agent_event', event });
+      if (event.type === 'denied') await log.write({ type: 'command_denied', tool: event.tool, detail: event.detail });
       if (event.type === 'done') done = event;
     }
     await this.#emit(charge.workItemId, [

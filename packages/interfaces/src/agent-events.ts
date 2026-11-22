@@ -43,6 +43,14 @@ export interface AgentFileChangeEvent extends AgentEventBase {
   previousPath?: string;
 }
 
+/** The runtime refused a tool call or command under the run's policy. */
+export interface AgentDeniedEvent extends AgentEventBase {
+  type: 'denied';
+  tool: string;
+  /** What was asked for, e.g. the command line. */
+  detail: string;
+}
+
 export interface AgentUsageEvent extends AgentEventBase {
   type: 'usage';
   /** Running total for the whole run, not a delta. */
@@ -65,6 +73,7 @@ export type AgentEvent =
   | AgentToolCallEvent
   | AgentToolResultEvent
   | AgentFileChangeEvent
+  | AgentDeniedEvent
   | AgentUsageEvent
   | AgentDoneEvent;
 

@@ -19,6 +19,8 @@ export type ScriptStep =
   | { kind: 'message'; text: string }
   | { kind: 'write'; path: string; content: string }
   | { kind: 'tool'; tool: string; input: unknown; output: string; isError?: boolean }
+  /** A shell command; refused (a `denied` event) when the run's policy denies it, else reported as run. */
+  | { kind: 'command'; command: string; output?: string }
   | { kind: 'usage'; inputTokens: number; outputTokens: number; costUsd: number }
   | { kind: 'wait'; ms: number }
   | { kind: 'fail'; error: string };
@@ -113,6 +115,19 @@ class ScriptedRun implements AgentRun {
             const callId = `call-${this.#seq + 1}`;
             this.#emit({ type: 'tool_call', callId, tool: step.tool, input: step.input });
             this.#emit({ type: 'tool_result', callId, isError: step.isError ?? false, output: step.output });
+            break;
+          }
+          case 'command': {
+            const callId = `call-${this.#seq + 1}`;
+            this.#emit({ type: 'tool_call', callId, tool: 'shell', input: { command: step.command } });
+            const words = step.command.trim().split(/\s+/);
+            const refused = (request.tools.commands ?? []).some((c) => c.split(/\s+/).every((w, i) => words[i] === w));
+            if (refused) {
+              this.#emit({ type: 'denied', tool: 'shell', detail: step.command });
+              this.#emit({ type: 'tool_result', callId, isError: true, output: `denied: ${step.command}` });
+            } else {
+              this.#emit({ type: 'tool_result', callId, isError: false, output: step.output ?? '' });
+            }
             break;
           }
           case 'usage': {

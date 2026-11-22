@@ -116,6 +116,8 @@ function formatAgentEvent(e: AgentEvent | undefined, line: (what: string, detail
       return line(`→ ${e.tool}`, oneLine(toolInput(e.input), full));
     case 'tool_result':
       return line(e.isError ? '← error' : '←', oneLine(e.output, full));
+    case 'denied':
+      return line(`✗ denied ${e.tool}`, oneLine(e.detail, full));
     case 'file_change':
       return line('file', `${e.change} ${e.path}${e.previousPath ? ` (was ${e.previousPath})` : ''}`);
     case 'usage':

@@ -58,7 +58,7 @@ export class StreamMapper {
           this.#model = typeof e.model === 'string' ? e.model : undefined;
           out.push({ type: 'message', role: 'system', text: `Claude Code ${String(e.claude_code_version ?? '')} started with model ${this.#model ?? 'unknown'}`.replace('  ', ' ') });
         } else if (e.subtype === 'permission_denied') {
-          out.push({ type: 'message', role: 'system', text: `Tool refused: ${String(e.tool_name ?? 'unknown')}` });
+          out.push(...this.#denied(String(e.tool_name ?? 'unknown'), e.tool_input, e.tool_use_id));
         }
         break;
 
@@ -69,6 +69,7 @@ export class StreamMapper {
             out.push({ type: 'message', role: 'assistant', text: block.text });
           } else if (block.type === 'tool_use') {
             out.push({ type: 'tool_call', callId: String(block.id ?? ''), tool: String(block.name ?? ''), input: block.input ?? {} });
+            if (typeof block.id === 'string') this.#inputs.set(block.id, block.input);
           }
         }
         if (message.usage && message.id) {
@@ -99,11 +100,28 @@ export class StreamMapper {
           costUsd: typeof e.total_cost_usd === 'number' ? e.total_cost_usd : 0,
         };
         if (this.#report(this.#final)) out.push({ type: 'usage', total: this.usage });
+        for (const d of Array.isArray(e.permission_denials) ? (e.permission_denials as Array<Record<string, unknown>>) : []) {
+          out.push(...this.#denied(String(d.tool_name ?? 'unknown'), d.tool_input, d.tool_use_id));
+        }
         this.#ending = ending(e);
         break;
       }
     }
     return out;
+  }
+
+  readonly #deniedIds = new Set<string>();
+  /** Tool inputs by call id, so a denial can say what was asked for. */
+  readonly #inputs = new Map<string, unknown>();
+
+  /** One `denied` event per refused call, however many times Claude Code reports it. */
+  #denied(tool: string, input: unknown, id: unknown): Draft[] {
+    const key = typeof id === 'string' && id ? id : `${tool}:${JSON.stringify(input)}`;
+    if (this.#deniedIds.has(key)) return [];
+    this.#deniedIds.add(key);
+    if (input === undefined && typeof id === 'string') input = this.#inputs.get(id);
+    const command = input && typeof input === 'object' && 'command' in input ? String((input as { command: unknown }).command) : undefined;
+    return [{ type: 'denied', tool, detail: command ?? (input === undefined ? '' : truncate(JSON.stringify(input))) }];
   }
 
   #summed(): Usage {

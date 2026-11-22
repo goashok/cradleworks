@@ -74,6 +74,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const { limits, tools, profile } = request;
     const budget = limits.maxSpendUsd ?? this.#options.defaultMaxSpendUsd;
     const prompt = [request.rolePrompt, contextNote(request.contextFiles)].filter(Boolean).join('\n\n');
+    // A command is refused on its own and with arguments; Claude Code checks each part of a
+    // compound command (`cd x && git push`) against these rules.
+    const denied = [...tools.deny, ...(tools.commands ?? []).flatMap((c) => [`Bash(${c})`, `Bash(${c}:*)`])];
     return [
       this.#options.command ?? 'claude',
       '--print',
@@ -91,7 +94,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       prompt,
       ...(budget !== undefined ? ['--max-budget-usd', String(budget)] : []),
       ...(tools.allow.length > 0 ? ['--allowedTools', ...tools.allow] : []),
-      ...(tools.deny.length > 0 ? ['--disallowedTools', ...tools.deny] : []),
+      ...(denied.length > 0 ? ['--disallowedTools', ...denied] : []),
     ];
   }
 

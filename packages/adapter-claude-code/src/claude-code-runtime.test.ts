@@ -52,7 +52,7 @@ async function request(overrides: Partial<AgentRunRequest> = {}): Promise<AgentR
     rolePrompt: 'You are the implementer.',
     input: '# Add hello.txt\n\nWrite hi.',
     contextFiles: ['.factory/rules/style.md'],
-    tools: { allow: [], deny: ['WebFetch'] },
+    tools: { allow: [], deny: ['WebFetch'], commands: ['git push'] },
     limits: { maxWallSeconds: 60, maxSpendUsd: 0.5 },
     ...overrides,
   };
@@ -72,12 +72,12 @@ describe('StreamMapper', () => {
       'message', // init
       'tool_call',
       'usage',
-      'message', // permission refused
+      'denied',
       'tool_result',
       'usage',
       'message',
       'tool_call',
-      'message', // permission refused
+      'denied',
       'tool_result',
       'usage', // third model message
       'message',
@@ -85,6 +85,8 @@ describe('StreamMapper', () => {
     ]);
     expect(drafts[1]).toMatchObject({ type: 'tool_call', tool: 'Bash', input: { command: 'echo "hi" > hello.txt && cat hello.txt' } });
     expect(drafts[4]).toMatchObject({ type: 'tool_result', isError: true });
+    expect(drafts[3]).toEqual({ type: 'denied', tool: 'Bash', detail: 'echo "hi" > hello.txt && cat hello.txt' });
+    expect(drafts[8]).toMatchObject({ type: 'denied', tool: 'Edit' });
     expect(mapper.ending).toMatchObject({ outcome: 'succeeded', summary: expect.stringContaining("couldn't create") });
     expect(mapper.usage).toEqual({ inputTokens: 8, outputTokens: 742, cacheReadTokens: 3664, cacheWriteTokens: 2678, costUsd: 0.00074319 });
   });
@@ -117,6 +119,7 @@ describe('ClaudeCodeRuntime', () => {
     const argv = readFileSync(`${fake.calls}.argv`, 'utf8').trim().split('\n');
     expect(argv.slice(0, 10)).toEqual(['--print', '--output-format', 'stream-json', '--verbose', '--model', 'claude-haiku-5-5', '--permission-mode', 'bypassPermissions', '--no-session-persistence', '--bare']);
     expect(argv).toEqual(expect.arrayContaining(['--max-budget-usd', '0.5', '--disallowedTools', 'WebFetch']));
+    expect(argv.slice(argv.indexOf('--disallowedTools'))).toEqual(['--disallowedTools', 'WebFetch', 'Bash(git push)', 'Bash(git push:*)']);
     const prompt = argv[argv.indexOf('--append-system-prompt') + 1];
     expect(prompt).toContain('You are the implementer.');
     expect(readFileSync(`${fake.calls}.argv`, 'utf8')).toContain('- .factory/rules/style.md');

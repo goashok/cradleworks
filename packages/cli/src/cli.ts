@@ -5,7 +5,7 @@ import { existsSync, globSync, mkdirSync, readFileSync, rmSync, writeFileSync } 
 import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
-import { ConfigError, KNOWN_CI_PATHS, KNOWN_SECRET_PATTERNS, loadProjectConfig } from '@cradleworks/config';
+import { ConfigError, DENIED_COMMANDS, KNOWN_CI_PATHS, KNOWN_SECRET_PATTERNS, loadProjectConfig } from '@cradleworks/config';
 import { Orchestrator, TERMINAL_WORK_ITEM_STATES, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem, type WorkProgress } from '@cradleworks/core';
 import type { AgentRuntime, CI, ItemRef, Tracker } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
@@ -893,7 +893,7 @@ async function openProject(io: CliEnv, dir: string = io.cwd): Promise<ProjectCon
     runtime,
     ...(ci ? { ci } : {}),
     ...(tracker ? { tracker } : {}),
-    hardRules: { protectedPaths: KNOWN_CI_PATHS, secretPatterns: KNOWN_SECRET_PATTERNS },
+    hardRules: { protectedPaths: KNOWN_CI_PATHS, secretPatterns: KNOWN_SECRET_PATTERNS, deniedCommands: DENIED_COMMANDS },
     workRoot: join(home, 'work'),
   });
   const project: Project = { repo, config, ...(Object.keys(related).length ? { related } : {}) };
