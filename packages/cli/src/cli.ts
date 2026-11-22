@@ -10,6 +10,7 @@ import { Orchestrator, WorkItemRepository, type Project, type WorkItem } from '@
 import type { AgentRuntime } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
+import { formatLog } from './log.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
 export interface CliEnv {
@@ -31,6 +32,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await status(rest, io);
       case 'validate':
         return await validateProject(rest, io);
+      case 'log':
+        return await log(rest, io);
       case undefined:
       case 'help':
       case '--help':
@@ -58,6 +61,8 @@ const USAGE = `Usage:
   factory submit <task.md> [--base <branch>]   Build a hand-written task and open a pull request
   factory status [<work-item-id>]              List work items, or show one in detail
   factory validate [<dir>]                     Check a project's .factory/ setup without running anything
+  factory log <run-id|work-item-id> [--full] [--json]
+                                               Replay a run's event log: every step, tool call and file change
 
 Run inside a repository that has a .factory/ folder. Factory state lives in
 $CRADLEWORKS_HOME (default ~/.cradleworks).
@@ -165,6 +170,42 @@ export function parseTaskFile(text: string, name: string): { title: string; body
     throw new UsageError(`${name} must start with a "# Title" heading`);
   }
   return { title: lines[index]!.replace(/^#\s+/, '').trim(), body: lines.slice(index + 1).join('\n').trim() };
+}
+
+// --- log ----------------------------------------------------------------------
+
+async function log(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { full: { type: 'boolean' }, json: { type: 'boolean' } },
+  });
+  const [id] = positionals;
+  if (!id || positionals.length > 1) throw new UsageError('log takes one run or work item id: factory log <id>');
+  const store = new SqliteStateStore({ path: join(factoryHome(io), 'state.db') });
+  try {
+    let runIds = [id];
+    if (!id.startsWith('run_')) {
+      const wi = await new WorkItemRepository(store).load(id);
+      if (!wi) throw new UsageError(`no run or work item ${id}`);
+      runIds = wi.runs.map((r) => r.id);
+    }
+    let found = false;
+    for (const runId of runIds) {
+      const events = await store.query({ streamIds: [runId] });
+      if (events.length === 0) continue;
+      found = true;
+      if (values.json) {
+        for (const e of events) io.stdout(`${JSON.stringify(e)}\n`);
+      } else {
+        io.stdout(`${runIds.length > 1 || runId !== id ? `${runId}\n` : ''}${formatLog(events, { full: values.full ?? false })}\n`);
+      }
+    }
+    if (!found) throw new UsageError(`no events for ${id}`);
+    return 0;
+  } finally {
+    await store.close();
+  }
 }
 
 // --- status -------------------------------------------------------------------

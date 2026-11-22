@@ -57,6 +57,37 @@ async function factory(args: string[], cwd = checkout, reg: Registry = registry(
   return { code, stdout, stderr };
 }
 
+describe('factory log', () => {
+  it('replays a run from its event log, by run or by work item', async () => {
+    const taskFile = join(root, 'task.md');
+    writeFileSync(taskFile, '# Add a changelog\n\nCreate CHANGELOG.md with a heading.\n');
+    const submitted = await factory(['submit', taskFile]);
+    const runId = /run\s+(run_\S+)/.exec(submitted.stdout)![1]!;
+    const wiId = /as (wi_\S+)/.exec(submitted.stdout)![1]!;
+
+    const byRun = await factory(['log', runId]);
+    expect(byRun.code).toBe(0);
+    const lines = byRun.stdout.trim().split('\n');
+    const steps = lines.map((l) => l.slice(10).split(/\s+/)[0]);
+    expect(steps).toEqual(expect.arrayContaining(['checkout', 'sandbox', 'context', 'agent', 'says', 'file', 'commit', 'push', 'pr']));
+    expect(byRun.stdout).toContain('Adding a changelog.');
+    expect(byRun.stdout).toMatch(/file\s+added CHANGELOG\.md/);
+    expect(steps.indexOf('commit')).toBeLessThan(steps.indexOf('pr'));
+
+    const byWorkItem = await factory(['log', wiId]);
+    expect(byWorkItem.stdout).toContain(runId);
+    expect(byWorkItem.stdout).toContain('Adding a changelog.');
+
+    const json = await factory(['log', runId, '--json']);
+    const events = json.stdout.trim().split('\n').map((l) => JSON.parse(l) as { streamId: string; seq: number });
+    expect(events.every((e) => e.streamId === runId)).toBe(true);
+    expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i + 1));
+
+    expect(await factory(['log', 'run_nope'])).toMatchObject({ code: 2, stderr: expect.stringMatching(/no events for run_nope/) });
+    expect(await factory(['log'])).toMatchObject({ code: 2 });
+  });
+});
+
 describe('factory submit', () => {
   it('builds a task file and opens a pull request, from a subfolder of the project', async () => {
     const taskFile = join(root, 'task.md');

@@ -44,6 +44,7 @@ factory submit task.md        # task.md starts with "# Title"; builds it and ope
 factory status                # list work items
 factory status <work-item-id> # tasks, PRs, runs and gate decisions
 factory validate [<dir>]      # check a project's .factory/ setup without running anything
+factory log <run-id>          # replay a run from its event log (--full for whole outputs, --json for raw events)
 ```
 
 Until the package is installed globally, run it as `packages/cli/src/main.ts`. State lives in `~/.cradleworks` (override with `CRADLEWORKS_HOME`).
