@@ -199,6 +199,16 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/adapter-gitlab:
+    dependencies:
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/adapter-local:
     dependencies:
       '@cradleworks/interfaces':
@@ -217,6 +227,9 @@ importers:
       '@cradleworks/adapter-github':
         specifier: workspace:*
         version: link:../adapter-github
+      '@cradleworks/adapter-gitlab':
+        specifier: workspace:*
+        version: link:../adapter-gitlab
       '@cradleworks/adapter-local':
         specifier: workspace:*
         version: link:../adapter-local

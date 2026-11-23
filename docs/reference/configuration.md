@@ -21,11 +21,11 @@ effect in the milestone shown.
 
 | Key | Values | Status | Meaning |
 | --- | --- | --- | --- |
-| `scm` | `github`, `local-git` | ✅ | Where the repo lives and PRs are opened. The repo is read from the `origin` remote. |
+| `scm` | `github`, `gitlab`, `local-git` | ✅ | Where the repo lives and PRs are opened. The repo is read from the `origin` remote. `gitlab` means gitlab.com, or the instance at `CRADLEWORKS_GITLAB_URL`, with a token in `CRADLEWORKS_GITLAB_TOKEN` (scopes `api`, `write_repository`). |
 | `sandbox` | `local-docker` (`process` for tests only) | ✅ | Where the agent runs. `process` isn't isolated, and the CLI warns if you use it. |
 | `runtime` | `cli-agent` | ✅ | How the agent is driven: a CLI agent, headless, inside the sandbox. |
-| `ci` | `github-actions`, `none` | ✅ | CI to wait on in the Verify station. `github-actions` needs `scm: github`. |
-| `tracker` | `github-issues`, `none` | ✅ | Where `factory watch` takes requests from. `github-issues` needs `scm: github`. With `none`, only `factory submit` works. See [From an issue to merged PRs](../guides/issues.md). |
+| `ci` | `github-actions`, `gitlab-ci`, `none` | ✅ | CI to wait on in the Verify station. `github-actions` needs `scm: github`; `gitlab-ci` needs `scm: gitlab`. |
+| `tracker` | `github-issues`, `gitlab-issues`, `none` | ✅ | Where `factory watch` takes requests from. `github-issues` needs `scm: github`; `gitlab-issues` needs `scm: gitlab`, and a person may decide gates with the Developer role or above. With `none`, only `factory submit` works. See [From an issue to merged PRs](../guides/issues.md). |
 
 ## `runtime` (required)
 

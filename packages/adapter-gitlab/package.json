@@ -1,0 +1,17 @@
+{
+  "name": "@cradleworks/adapter-gitlab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitLab adapters: merge requests, GitLab CI pipelines and GitLab issues",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fake": "./src/fake-gitlab.ts"
+  },
+  "dependencies": {
+    "@cradleworks/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@cradleworks/contracts": "workspace:*"
+  }
+}

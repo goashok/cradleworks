@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeCodeRuntime, resolveClaudeAuth } from '@cradleworks/adapter-claude-code';
 import { GitHubActionsCI, GitHubIssuesTracker, GitHubSourceControl, githubRepoRef } from '@cradleworks/adapter-github';
+import { baseUrlFrom, GitLabCI, GitLabIssuesTracker, GitLabSourceControl, gitlabRepoFromRemote } from '@cradleworks/adapter-gitlab';
 import { DockerSandbox } from '@cradleworks/adapter-local';
 import { LocalGitSourceControl, localRepoRef, ProcessSandbox } from '@cradleworks/contracts/fakes';
 import type { AgentRuntime, CI, RepoRef, Sandbox, SourceControl, Tracker } from '@cradleworks/interfaces';
@@ -40,6 +41,11 @@ export function defaultRegistry(): Registry {
           return m ? githubRepoRef(m[1]!, m[2]!) : undefined;
         },
       },
+      // gitlab.com, or a self-managed instance at $CRADLEWORKS_GITLAB_URL.
+      gitlab: {
+        create: () => new GitLabSourceControl(),
+        repoFromRemote: (url) => gitlabRepoFromRemote(url, baseUrlFrom({})),
+      },
       'local-git': {
         create: () => new LocalGitSourceControl(),
         repoFromRemote: (url) => {
@@ -57,9 +63,11 @@ export function defaultRegistry(): Registry {
     },
     ci: {
       'github-actions': { create: () => new GitHubActionsCI(), scm: ['github'] },
+      'gitlab-ci': { create: () => new GitLabCI(), scm: ['gitlab'] },
     },
     tracker: {
       'github-issues': { create: () => new GitHubIssuesTracker(), scm: ['github'] },
+      'gitlab-issues': { create: () => new GitLabIssuesTracker(), scm: ['gitlab'] },
     },
     testOnlySandboxes: new Set(['process']),
   };
