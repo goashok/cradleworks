@@ -54,7 +54,11 @@ export class ProcessSandbox implements Sandbox {
       branch: spec.branch,
       workspacePath,
       sandboxPath: workspacePath,
+      // Not isolated: the agent sees the host folder itself.
+      contextPath: `${workspacePath}.context`,
+      contextSandboxPath: `${workspacePath}.context`,
     };
+    mkdirSync(handle.contextPath, { recursive: true });
     this.#entries.set(handle.id, { handle, sourcePath: spec.source.path, env: { ...(spec.env ?? {}) }, network: spec.network });
     return { ...handle };
   }
@@ -179,6 +183,7 @@ export class ProcessSandbox implements Sandbox {
     const entry = this.#entries.get(sandbox.id);
     if (!entry) return;
     this.#entries.delete(sandbox.id);
+    rmSync(entry.handle.contextPath, { recursive: true, force: true });
     try {
       await git(['worktree', 'remove', '--force', entry.handle.workspacePath], entry.sourcePath);
     } catch {

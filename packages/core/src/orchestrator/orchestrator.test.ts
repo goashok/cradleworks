@@ -139,8 +139,10 @@ describe('Build station', () => {
     // The context pack: the rule files, and the agent was told to read them.
     const pack = (await store.readStream(result.runId)).find((e) => e.type === 'context_pack_built')!.payload as { files: Array<{ path: string }> };
     expect(pack.files.map((f) => f.path)).toEqual(['.factory/rules/security.md', '.factory/rules/style.md']);
-    expect(seenRequests[0]!.contextFiles).toEqual(['.factory/rules/security.md', '.factory/rules/style.md']);
-    expect(seenRequests[0]!.rolePrompt).toContain('.factory/rules/style.md');
+    // The agent reads the base branch's copies, in the sandbox's reference folder, not the checkout's.
+    const given = seenRequests[0]!.contextFiles;
+    expect(given).toEqual([expect.stringMatching(/\.context\/rules\/\.factory\/rules\/security\.md$/), expect.stringMatching(/\.context\/rules\/\.factory\/rules\/style\.md$/)]);
+    expect(seenRequests[0]!.rolePrompt).toContain(given[1]);
     expect(seenRequests[0]!.input).toContain('Create `hello.txt`');
     expect(seenRequests[0]!.limits).toEqual({ maxWallSeconds: 1800, maxSpendUsd: 5 });
 

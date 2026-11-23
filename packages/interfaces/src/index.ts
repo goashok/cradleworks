@@ -15,4 +15,4 @@ export type * from './notifier.ts';
 export type * from './state-store.ts';
 export type * from './spec-store.ts';
 
-export const INTERFACES_VERSION = '0.2.0';
+export const INTERFACES_VERSION = '0.3.0';

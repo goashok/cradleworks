@@ -31,6 +31,8 @@ import { runProgram, streamProgram, type RunResult } from './run.ts';
 
 const ADAPTER = 'local-docker';
 export const WORKSPACE = '/workspace';
+/** Where the factory's reference files (rules, skills) appear in the container, read-only. */
+export const CONTEXT = '/factory';
 export const SANDBOX_LABEL = 'dev.cradleworks.sandbox';
 /** The pid of the factory process that made a container or network; prune spares live owners. */
 export const OWNER_LABEL = 'dev.cradleworks.owner';
@@ -124,6 +126,7 @@ export class DockerSandbox implements Sandbox {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(spec.taskId)) throw fail('invalid_input', 'create', `unsafe task id ${spec.taskId}`);
     const rules = allowRules(spec.network, 'create');
     const workspacePath = join(this.#root, spec.taskId);
+    const contextPath = `${workspacePath}.context`;
     const container = containerName(spec.taskId);
     if (existsSync(workspacePath)) throw fail('conflict', 'create', `a sandbox for task ${spec.taskId} already exists`);
 
@@ -134,6 +137,7 @@ export class DockerSandbox implements Sandbox {
 
     let egress: Egress | undefined;
     try {
+      mkdirSync(contextPath, { recursive: true });
       if (rules.length > 0) egress = await this.#startEgress(spec.taskId, rules);
       const gitDir = (await this.#gitOut(['rev-parse', '--path-format=absolute', '--git-common-dir'], workspacePath)).trim();
       const resources = { ...this.#options.defaults, ...spec.resources };
@@ -166,6 +170,9 @@ export class DockerSandbox implements Sandbox {
         `type=bind,source=${gitDir},target=${gitDir},readonly`,
         '--mount',
         `type=bind,source=${this.#mavenSettings},target=${MAVEN_SETTINGS},readonly`,
+        // The host writes the base branch's rules (and later skills) here; the agent only reads.
+        '--mount',
+        `type=bind,source=${contextPath},target=${CONTEXT},readonly`,
         '--workdir',
         WORKSPACE,
         ...(resources.cpus !== undefined ? ['--cpus', String(resources.cpus)] : []),
@@ -183,10 +190,11 @@ export class DockerSandbox implements Sandbox {
       await this.#removeContainer(container);
       if (egress) await this.#stopEgress(egress);
       await this.#removeWorktree(workspacePath, spec.source.path);
+      rmSync(contextPath, { recursive: true, force: true });
       throw error;
     }
 
-    const handle: SandboxHandle = { id: `${ADAPTER}-${spec.taskId}`, taskId: spec.taskId, branch: spec.branch, workspacePath, sandboxPath: WORKSPACE };
+    const handle: SandboxHandle = { id: `${ADAPTER}-${spec.taskId}`, taskId: spec.taskId, branch: spec.branch, workspacePath, sandboxPath: WORKSPACE, contextPath, contextSandboxPath: CONTEXT };
     this.#entries.set(handle.id, {
       handle,
       container,
@@ -340,6 +348,7 @@ export class DockerSandbox implements Sandbox {
     await this.#removeContainer(entry.container);
     if (entry.egress) await this.#stopEgress(entry.egress);
     await this.#removeWorktree(entry.handle.workspacePath, entry.sourcePath);
+    rmSync(entry.handle.contextPath, { recursive: true, force: true });
   }
 
   /**

@@ -149,7 +149,8 @@ Good rules are:
   dropped, and the log lists what was dropped.
 
 Rules live in git, so changing what agents do is a reviewed pull request, not a prompt edit
-somewhere.
+somewhere. Agents always read the rules as they are on the base branch, so a new or edited rule
+takes effect once it's merged, and a change can't loosen the rules it's judged by.
 
 ### Prompt additions for one role
 
@@ -166,9 +167,8 @@ win where the two conflict: an addition can't change the reviewer's verdict form
 implementer running the tests. The reviewer's addition also applies to the `ai` spec and plan
 checks, which the reviewer role runs.
 
-Additions are read from the base branch, never from the branch being built or reviewed, so a
-change can't rewrite the instructions of the agents judging it. A new or edited addition takes
-effect once it's merged. It shares the rules' 256 KB budget and is loaded first. Each run's log,
+Like rules, additions are read from the base branch, so a new or edited addition takes effect
+once it's merged. It shares the rules' 256 KB budget and is loaded first. Each run's log,
 and the run page in `factory console`, lists every rule file and addition the agent was given,
 with a content hash, so you can tell exactly which version a run used.
 

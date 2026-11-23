@@ -2,7 +2,7 @@
 // real files, commands run as processes, scripted implementer and reviewer.
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -130,6 +130,23 @@ describe('prompt additions', () => {
     ]);
     expect(verify.files[0]!.sha256).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(packs.find((x) => x.role === 'implementer')!.files[0]!.path).toBe('.factory/prompts/implementer.md');
+  });
+
+  it("gives agents the base branch's rules, so a change can't rewrite the rules its reviewer reads", async () => {
+    let seen = '';
+    const o = orchestrator({
+      implement: () => [say('Done.'), write('fixed.txt'), { kind: 'write', path: '.factory/rules/style.md', content: 'Anything goes.\n' }],
+      review: (req) => {
+        seen = readFileSync(req.contextFiles[0]!, 'utf8');
+        return [say(`Looks right.\n${PASS}`)];
+      },
+    });
+    const { workItemId, taskId } = await start(o);
+    await o.runTask(project, workItemId, taskId);
+    expect(seen).toBe('Keep it short.\n');
+    const reviewer = requests.find((r) => r.profile.role === 'reviewer')!;
+    expect(reviewer.contextFiles).toHaveLength(1);
+    expect(reviewer.contextFiles[0]).toMatch(/\.context\/rules\/\.factory\/rules\/style\.md$/);
   });
 
   it('leaves the role prompt exactly as it was when a project has no additions', async () => {

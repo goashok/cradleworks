@@ -1,38 +1,39 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildContextPack, sha256, withAddition } from './context-pack.ts';
+import { describe, expect, it } from 'vitest';
+import { buildContextPack, matchRules, sha256, withAddition } from './context-pack.ts';
 
-let dir: string;
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'cw-pack-'));
-  mkdirSync(join(dir, '.factory/rules'), { recursive: true });
-  writeFileSync(join(dir, '.factory/rules/a.md'), 'aaaa');
-  writeFileSync(join(dir, '.factory/rules/b.md'), 'bbbbbbbb');
-});
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+const rules = [
+  { path: '.factory/rules/a.md', content: 'aaaa' },
+  { path: '.factory/rules/b.md', content: 'bbbbbbbb' },
+];
 
 describe('context pack', () => {
+  it('matches rule patterns against the base tree in pattern order, each file once', () => {
+    const tree = ['README.md', '.factory/rules/b.md', '.factory/rules/a.md', 'docs/x.md', 'AGENTS.md'];
+    expect(matchRules(tree, ['AGENTS.md', '.factory/rules/*.md', '**/*.md'])).toEqual(['AGENTS.md', '.factory/rules/a.md', '.factory/rules/b.md', 'README.md', 'docs/x.md']);
+    expect(matchRules(tree, ['nothing/*.md'])).toEqual([]);
+  });
+
   it('lists rules with their size and hash, in order', () => {
-    const pack = buildContextPack(dir, ['.factory/rules/*.md']);
+    const pack = buildContextPack(rules);
     expect(pack.files).toEqual([
       { path: '.factory/rules/a.md', bytes: 4, sha256: sha256('aaaa'), kind: 'rule' },
       { path: '.factory/rules/b.md', bytes: 8, sha256: sha256('bbbbbbbb'), kind: 'rule' },
     ]);
+    expect(pack.rules).toEqual(rules);
     expect(pack.addition).toBeUndefined();
   });
 
   it('puts the prompt addition first, in the same budget, and drops what no longer fits', () => {
     const addition = { path: '.factory/prompts/reviewer.md', text: 'cccccc' };
-    const pack = buildContextPack(dir, ['.factory/rules/*.md'], 12, addition);
+    const pack = buildContextPack(rules, 12, addition);
     expect(pack.files.map((f) => [f.path, f.kind])).toEqual([
       ['.factory/prompts/reviewer.md', 'prompt'],
       ['.factory/rules/a.md', 'rule'],
     ]);
     expect(pack.dropped).toEqual(['.factory/rules/b.md']);
+    expect(pack.rules.map((r) => r.path)).toEqual(['.factory/rules/a.md']);
     expect(pack.addition).toEqual(addition);
-    expect(buildContextPack(dir, [], 3, addition)).toMatchObject({ files: [], dropped: ['.factory/prompts/reviewer.md'] });
+    expect(buildContextPack([], 3, addition)).toMatchObject({ files: [], dropped: ['.factory/prompts/reviewer.md'] });
   });
 
   it('adds the addition after the role prompt, saying where it came from and that the role prompt wins', () => {

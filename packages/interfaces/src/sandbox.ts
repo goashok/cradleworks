@@ -30,6 +30,14 @@ export interface SandboxHandle {
   workspacePath: string;
   /** The same checkout as seen from inside the sandbox. */
   sandboxPath: string;
+  /**
+   * Host path of a folder of reference files the factory gives the agent: the base branch's
+   * rules, and later skills. Outside the checkout, so nothing in it is committed; the agent can
+   * read it but not change it.
+   */
+  contextPath: string;
+  /** The same folder as seen from inside the sandbox. */
+  contextSandboxPath: string;
 }
 
 export interface ExecOptions {

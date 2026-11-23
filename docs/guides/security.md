@@ -76,11 +76,12 @@ goes in the agent's environment instead.)
   can't remove these. `factory status` lists the protected files a task changed, and the PR
   says so in a comment. (The approved spec the factory itself writes under `.factory/specs/`
   doesn't count, unless the agent edited it.)
-- Prompt additions (`.factory/prompts/<role>.md`) are read from the base branch, not from the
-  branch under work, so an implementer can't rewrite its reviewer's instructions in its own
-  change. Rule files are listed by path and read from the checkout, so a rule edited on a
-  branch is what that branch's reviewer reads; any such edit is under `.factory/` and waits for a
-  person.
+- Rules and prompt additions are read from the base branch, never from the branch under work,
+  so a change can't rewrite the rules or instructions of the agents that build or judge it. The
+  factory copies the base branch's rule files into a reference folder outside the checkout
+  (`/factory` in the container, read-only to the agent) and points the agent there; additions
+  go into the role's prompt. A change that edits a rule is judged by the rule as it stands, and
+  the edit takes effect once it's merged.
 
 **A secret scan before every push.** What the run added is scanned for private keys, passwords in
 URLs, the token formats of the common hosted services, and files that hold secrets by

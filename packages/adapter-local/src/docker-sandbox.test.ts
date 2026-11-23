@@ -1,7 +1,7 @@
 // Runs where a Docker engine answers (developer machines and CI); skipped elsewhere.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describeSandboxContract, expectAdapterError } from '@cradleworks/contracts';
@@ -154,6 +154,18 @@ describe.skipIf(!haveDocker)('DockerSandbox', () => {
       expect(readFileSync(join(s.workspacePath, '.git'), 'utf8')).toMatch(/^gitdir: /);
       expect(existsSync(join(gitDir, 'hooks', 'pre-commit'))).toBe(false);
       expect(readFileSync(join(gitDir, 'config'), 'utf8')).not.toContain('fsmonitor');
+    });
+
+    it('shows the reference folder the host writes, read-only and outside the checkout', async () => {
+      const s = await create();
+      expect(s.contextSandboxPath).toBe('/factory');
+      mkdirSync(join(s.contextPath, 'rules'), { recursive: true });
+      writeFileSync(join(s.contextPath, 'rules', 'style.md'), 'Keep it short.\n');
+      const r = await sh(s, 'cat /factory/rules/style.md; echo changed > /factory/rules/style.md 2>/dev/null && echo wrote; touch /factory/new 2>/dev/null && echo made; git status --porcelain | wc -l');
+      expect(r.stdout.trim().split('\n')).toEqual(['Keep it short.', '0']);
+      await adapter.destroy(s);
+      open.length = 0;
+      expect(existsSync(s.contextPath)).toBe(false);
     });
 
     it('runs as the host user with no capabilities', async () => {

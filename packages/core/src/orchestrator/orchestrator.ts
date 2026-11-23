@@ -4,7 +4,7 @@
 // Every decision lands in the work item's stream; every step lands in the run's stream.
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   AdapterError,
   ZERO_USAGE,
@@ -35,7 +35,7 @@ import { resolveAgent, type ProjectConfig } from '../config/types.ts';
 import type { WorkItemEvent } from '../domain/events.ts';
 import { newId, type IdKind } from '../domain/ids.ts';
 import { TERMINAL_WORK_ITEM_STATES, type CheckResult, type CiResult, type Evidence, type GateMode, type ReviewResult, type Station, type Task, type TaskState, type VerifyVerdict, type WorkItem, type WorkItemState } from '../domain/types.ts';
-import { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES, promptAdditionPath, withAddition, type ContextPack } from './context-pack.ts';
+import { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES, matchRules, promptAdditionPath, RULES_DIR, withAddition, type ContextPack } from './context-pack.ts';
 import { implementerPrompt, reviewerPrompt } from './prompts.ts';
 import {
   baseDirective,
@@ -319,7 +319,7 @@ export class Orchestrator {
 
       step = 'context';
       const pack = await this.#context(project, sandbox, 'implementer', base, log);
-      const contextFiles = pack.files.map((f) => f.path);
+      const contextFiles = pack.readPaths;
 
       const spec = await this.#specFor(task);
       let specWritten: { path: string; content: string } | undefined;
@@ -443,7 +443,7 @@ export class Orchestrator {
           head: branch,
           base,
           title: task.title,
-          body: prBody(task.description ?? '', done?.summary, workItemId, taskId, runId, contextFiles, fromTracker(wi) ? wi.source.url : undefined),
+          body: prBody(task.description ?? '', done?.summary, workItemId, taskId, runId, pack.files.map((f) => f.path), fromTracker(wi) ? wi.source.url : undefined),
           labels: [],
         });
         await log.write({ type: 'pr_opened', id: pr.id, url: pr.url });
@@ -1069,7 +1069,7 @@ export class Orchestrator {
     charge: { project: Project; workItemId?: string; taskId?: string },
   ): Promise<{ review: ReviewResult; stop?: undefined; cost: number } | { review?: undefined; stop: string; cost: number }> {
     const pack = await this.#context(project, sandbox, 'reviewer', base, log);
-    const contextFiles = pack.files.map((f) => f.path);
+    const contextFiles = pack.readPaths;
     const limits = { maxWallSeconds: this.#deps.reviewWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
     let done: Extract<AgentEvent, { type: 'done' }> | undefined;
     let cost = 0;
@@ -1171,7 +1171,7 @@ export class Orchestrator {
       sandbox = await this.#deps.sandbox.create({ taskId: `${shortId(wi.id)}-${tag}`, source: checkout, baseRef: base, branch: `factory/${shortId(wi.id)}-${tag}`, image: project.config.stack.image, network });
       await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch: base, baseRef: base, network });
       const pack = await this.#context(project, sandbox, opts.role, base, log);
-      const contextFiles = pack.files.map((f) => f.path);
+      const contextFiles = pack.readPaths;
       step = 'agent';
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
@@ -1232,7 +1232,7 @@ export class Orchestrator {
       sandbox = await this.#deps.sandbox.create({ taskId: `${shortId(task.id)}-tester-${tag}`, source: checkout, baseRef: base, branch: `factory/${shortId(task.id)}-tests-${tag}`, image: project.config.stack.image, network });
       await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch: base, baseRef: base, network });
       const pack = await this.#context(project, sandbox, 'tester', base, log);
-      const contextFiles = pack.files.map((f) => f.path);
+      const contextFiles = pack.readPaths;
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
       const done = await this.#runAgent(log, { runId: `${runId}-tester`, profile, sandbox, rolePrompt: withAddition(testerPrompt(project.config, contextFiles), pack.addition), input: testerInput(spec, task), contextFiles, tools: { allow: [], deny: [] }, limits }, { project, workItemId, taskId: task.id });
@@ -1278,7 +1278,7 @@ export class Orchestrator {
     if (applied.exitCode !== 0) return { verdict: 'upheld', reasons: [`The acceptance tests no longer apply to the branch, so they could not be reviewed: ${(applied.stderr || applied.stdout).trim().slice(0, 300)}`] };
     const profile: AgentProfile = { role: 'tester', ...resolveAgent(project.config, 'tester') };
     const pack = await this.#context(project, sandbox, 'tester', base, log);
-    const contextFiles = pack.files.map((f) => f.path);
+    const contextFiles = pack.readPaths;
     const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
     await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
     const done = await this.#runAgent(log, {
@@ -1506,16 +1506,32 @@ export class Orchestrator {
    */
   /**
    * What an agent in `role` is given: the project rules, and the team's prompt addition for the
-   * role. The addition is read from the base branch, never the branch under work, so a change can't
-   * rewrite the instructions of the agents that build or judge it. Logged with a hash per file.
+   * role, both as they are on the base branch, never on the branch under work, so a change can't
+   * rewrite the rules or instructions of the agents that build or judge it. Rules are copied into
+   * the sandbox's reference folder, outside the checkout, and the agent is pointed there. Logged
+   * with a hash per file.
    */
-  async #context(project: Project, sandbox: SandboxHandle, role: AgentRole, base: string, log: RunLog): Promise<ContextPack> {
-    const path = promptAdditionPath(role);
-    const shown = await this.#deps.sandbox.exec(sandbox, ['git', 'show', `origin/${base}:${path}`]);
-    const addition = shown.exitCode === 0 && shown.stdout.trim() ? { path, text: shown.stdout } : undefined;
-    const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES, addition);
-    await log.write({ type: 'context_pack_built', role, files: pack.files, dropped: pack.dropped, budgetBytes: pack.budgetBytes });
-    return pack;
+  async #context(project: Project, sandbox: SandboxHandle, role: AgentRole, base: string, log: RunLog): Promise<ContextPack & { readPaths: string[] }> {
+    const ref = `origin/${base}`;
+    const git = (args: string[]) => this.#deps.sandbox.exec(sandbox, ['git', ...args]);
+    const tree = await git(['ls-tree', '-r', '-z', '--name-only', ref]);
+    if (tree.exitCode !== 0) throw new Error(`could not read the rule files on ${ref}: ${(tree.stderr || tree.stdout).trim()}`);
+    const rules: Array<{ path: string; content: string }> = [];
+    for (const path of matchRules(tree.stdout.split('\0').filter(Boolean), project.config.context.rules)) {
+      const shown = await git(['show', `${ref}:${path}`]);
+      if (shown.exitCode === 0) rules.push({ path, content: shown.stdout });
+    }
+    const additionPath = promptAdditionPath(role);
+    const shown = await git(['show', `${ref}:${additionPath}`]);
+    const addition = shown.exitCode === 0 && shown.stdout.trim() ? { path: additionPath, text: shown.stdout } : undefined;
+    const pack = buildContextPack(rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES, addition);
+    for (const rule of pack.rules) {
+      const target = join(sandbox.contextPath, RULES_DIR, rule.path);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, rule.content);
+    }
+    await log.write({ type: 'context_pack_built', role, base: ref, files: pack.files, dropped: pack.dropped, budgetBytes: pack.budgetBytes });
+    return { ...pack, readPaths: pack.rules.map((r) => `${sandbox.contextSandboxPath}/${RULES_DIR}/${r.path}`) };
   }
 
   async #runAgent(
