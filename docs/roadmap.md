@@ -80,7 +80,7 @@ Each milestone ends with something that runs. M0 to M5 are done.
   real one on the 30 tasks, twice, since the outcomes only move when the implementer makes a
   mistake for the reviewer to catch. The reviewer drill checks it directly (`factory review` on
   known-wrong changes): the weakened reviewer is flagged on every run, the real one on none. See
-  [Measure the factory](guides/evaluating.md).
+  [How Cradleworks is measured](guides/evaluating.md).
 
 ## Later
 

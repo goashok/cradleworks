@@ -78,5 +78,5 @@ From the first baseline on two reference projects (Spring Boot + React, and Node
 | Refactors | 5 / 6 | introducing a `Money` type, decoupling modules, `Optional` instead of null |
 | Dependency upgrades | 3 / 4 | Node 24, Postgres 18 (Spring Boot 4 failed) |
 
-Most runs took one to two minutes and cost cents. See [Measure the factory](evaluating.md) for how
+Most runs took one to two minutes and cost cents. See [How Cradleworks is measured](evaluating.md) for how
 these were graded.

@@ -1,4 +1,4 @@
-# Measure the factory
+# How Cradleworks is measured
 
 A factory is only as good as the share of its PRs that are actually right. Cradleworks is measured
 against a fixed suite of graded tasks, so a change to the core, the prompts, the rules or the model

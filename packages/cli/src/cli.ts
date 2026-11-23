@@ -14,6 +14,8 @@ import { formatLog } from './log.ts';
 import { checkRequirements, checkSkills, skillsCommand, type RequirementRunner } from './skills.ts';
 import { checkDrill, runDrill } from './drill.ts';
 import { evalCommand } from './eval/command.ts';
+import { findSection, findTopic, formatSections, formatTopicList, loadTopics, searchDocs } from './docs.ts';
+import { explain, formatExplained, formatKeyList } from './explain.ts';
 import { computeStats, formatStats, type StatsItem } from './stats.ts';
 import { AgentsByName } from './agents.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
@@ -74,6 +76,10 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         });
       case 'stats':
         return await stats(rest, io);
+      case 'docs':
+        return docs(rest, io);
+      case 'config':
+        return configCommand(rest, io);
       case 'skills': {
         const root = findProjectRoot(io.cwd);
         if (!root) throw new UsageError(`no .factory/factory.yaml in ${io.cwd} or any folder above it`);
@@ -143,7 +149,11 @@ const USAGE = `Usage:
   factory stats [--days <n>] [--project <name>] [--json]
                                     How the factory did on real work: gates, send-backs, rework,
                                     agent checks, cost and time per merged change
-  factory validate [<dir>]          Check a project's .factory/ setup without running anything
+  factory validate [<dir>] [--json] Check a project's .factory/ setup without running anything
+  factory docs [<topic> [<section>]] [--search <words>]
+                                    The guides and reference for this version, at the terminal
+  factory config explain [<key>]    What a factory.yaml key means: type, default, this repo's
+                                    value, and where it's documented
   factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <n>] | update <name> [--ref <ref>] | lock <name>
                                     Vendor agent skills into .factory/skills/ and pin them in
                                     .factory/skills.lock; nothing is committed
@@ -164,12 +174,25 @@ class UsageError extends Error {}
 
 /** Checks what `submit` would need, without touching git, the network or the state store. */
 async function validateProject(args: string[], io: CliEnv): Promise<number> {
-  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
-  if (positionals.length > 1) throw new UsageError('validate takes at most one folder: factory validate [<dir>]');
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { json: { type: 'boolean' } } });
+  if (positionals.length > 1) throw new UsageError('validate takes at most one folder: factory validate [<dir>] [--json]');
   const start = resolve(io.cwd, positionals[0] ?? '.');
   const repoRoot = findProjectRoot(start);
-  if (!repoRoot) throw new UsageError(`no .factory/factory.yaml in ${start} or any folder above it`);
-  const config = loadProjectConfig(repoRoot); // throws ConfigError with line numbers
+  if (!repoRoot) {
+    if (values.json) {
+      io.stdout(`${JSON.stringify({ ok: false, repoRoot: null, problems: [`no .factory/factory.yaml in ${start} or any folder above it`], notes: [] })}\n`);
+      return 2;
+    }
+    throw new UsageError(`no .factory/factory.yaml in ${start} or any folder above it`);
+  }
+  let config: ReturnType<typeof loadProjectConfig>;
+  try {
+    config = loadProjectConfig(repoRoot); // throws ConfigError with line numbers
+  } catch (error) {
+    if (!(values.json && error instanceof ConfigError)) throw error;
+    io.stdout(`${JSON.stringify({ ok: false, repoRoot, configErrors: error.issues.map((i) => ({ file: i.file, line: i.line, col: i.col, message: i.message })), problems: [], notes: [] })}\n`);
+    return 2;
+  }
 
   const registry = io.registry ?? defaultRegistry();
   const problems: string[] = [];
@@ -233,6 +256,11 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   notes.push(...requirements.notes);
 
   const rules = config.context.rules.flatMap((p) => globSync(p, { cwd: repoRoot })).length;
+  if (values.json) {
+    const summary = { project: config.project, ruleFiles: rules, promptAdditions: additions.length, skills: skills.count, image: config.stack.image, adapters: config.adapters };
+    io.stdout(`${JSON.stringify({ ok: problems.length === 0, repoRoot, ...summary, notes, problems })}\n`);
+    return problems.length === 0 ? 0 : 2;
+  }
   io.stdout(`${relativeOrSelf(io.cwd, repoRoot)}: project ${config.project}, ${rules} rule file(s), ${additions.length} prompt addition(s), ${skills.count} skill(s), image ${config.stack.image}\n`);
   for (const note of notes) io.stdout(`  note: ${note}\n`);
   for (const problem of problems) io.stderr(`  problem: ${problem}\n`);
@@ -313,6 +341,60 @@ async function review(args: string[], io: CliEnv): Promise<number> {
   } finally {
     await ctx.close();
   }
+}
+
+function docs(args: string[], io: CliEnv): number {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { search: { type: 'string' }, sections: { type: 'boolean' } } });
+  const topics = loadTopics();
+  if (!topics.length) throw new UsageError('no docs folder next to this factory: read them at https://github.com/goashok/cradleworks/tree/main/docs');
+  if (values.search !== undefined) {
+    const hits = searchDocs(topics, [values.search, ...positionals].join(' '));
+    if (!hits.length) {
+      io.stdout(`Nothing in the docs mentions all of: ${values.search}\nfactory docs lists the topics.\n`);
+      return 1;
+    }
+    for (const h of hits) io.stdout(`  factory docs ${h.topic.name} "${h.section?.heading ?? ''}"    ${h.topic.title}${h.section ? ` > ${h.section.heading}` : ''}\n`);
+    return 0;
+  }
+  const [name, ...rest] = positionals;
+  if (!name) {
+    io.stdout(formatTopicList(topics));
+    return 0;
+  }
+  const topic = findTopic(topics, name);
+  if (!topic) throw new UsageError(`no topic "${name}"; factory docs lists them`);
+  if (values.sections) {
+    io.stdout(`${topic.title} (docs/${topic.path})\n${formatSections(topic)}\n`);
+    return 0;
+  }
+  if (rest.length) {
+    const section = findSection(topic, rest.join(' '));
+    if (!section) throw new UsageError(`no section "${rest.join(' ')}" in ${topic.name}; its sections:\n${formatSections(topic)}`);
+    io.stdout(`${section.text}\n\n(docs/${topic.path}#${section.anchor})\n`);
+    return 0;
+  }
+  io.stdout(`${topic.text.trimEnd()}\n\n(docs/${topic.path})\n`);
+  return 0;
+}
+
+function configCommand(args: string[], io: CliEnv): number {
+  const [sub, ...rest] = args;
+  if (sub !== 'explain') throw new UsageError('factory config explain [<key>]');
+  const { positionals } = parseArgs({ args: rest, allowPositionals: true, options: {} });
+  if (!positionals.length) {
+    io.stdout(formatKeyList());
+    return 0;
+  }
+  const repoRoot = findProjectRoot(io.cwd);
+  let code = 0;
+  for (const key of positionals) {
+    const e = explain(key, repoRoot);
+    if ('unknown' in e) {
+      io.stderr(`factory: ${key} is not a factory.yaml key${e.suggestions.length ? `; did you mean ${e.suggestions.join(', ')}?` : ''}\n`);
+      code = 2;
+    } else io.stdout(formatExplained(e));
+  }
+  return code;
 }
 
 async function stats(args: string[], io: CliEnv): Promise<number> {

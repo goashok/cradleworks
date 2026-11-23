@@ -10,3 +10,4 @@ export {
 } from './load.ts';
 export { DENIED_COMMANDS, KNOWN_CI_PATHS, KNOWN_SECRET_PATTERNS } from './hard-rules.ts';
 export { overlay, parseYaml, stringifyYaml } from './yaml-tools.ts';
+export { FACTORY_YAML, type Field } from './schema.ts';

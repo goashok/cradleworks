@@ -247,6 +247,10 @@ $ factory submit task.md
 nothing, `context.include` paths that don't exist, and an image that isn't built yet. It runs
 nothing and needs no network.
 
+When you're not sure what a key does, `factory config explain <key>` gives its type, its default,
+your value, and what it means: for example `factory config explain gates.change_approval`. The
+guides are at the terminal too: `factory docs`, or `factory docs --search <words>`.
+
 Then [write a good task](writing-tasks.md), and [follow the run](runs-and-logs.md).
 
 ## Checklist

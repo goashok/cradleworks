@@ -21,7 +21,9 @@ factory eval check <suite> [<task> | @<set> ...]
 factory eval report <results.jsonl>...
 factory eval compare --base <results.jsonl>... --variant <results.jsonl>... [--json]
 factory stats [--days <n>] [--project <name>] [--json]
-factory validate [<dir>]
+factory validate [<dir>] [--json]
+factory docs [<topic> [<section>]] [--sections] [--search <words>]
+factory config explain [<key>...]
 factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <name>] | update <name> [--ref <ref>] | lock <name>
 factory log <run-id|work-item-id> [--full] [--json]
 factory help
@@ -259,7 +261,7 @@ happens on this machine; nothing is committed, so the result is a change to revi
 
 Exit status: 0 done, 2 refused (bad source, an existing skill on `add`, a local skill on `update`).
 
-## `factory validate [<dir>]`
+## `factory validate [<dir>] [--json]`
 
 Checks a project's `.factory/` setup without touching git, the network or the state store. It
 looks in `<dir>` (default: the current folder) and the folders above it.
@@ -277,7 +279,39 @@ It reports:
 - a skill's requirements: each command recorded with `factory skills require` (or guessed by `add`) for a skill a role uses is run in a throwaway container of `stack.image`, with no network; one that fails is a problem. When the image isn't built yet, it's a note instead
 - whether `stack.image` has been built on this machine (a note, not an error)
 
-It prints `ok` and exits 0 when there are no problems.
+It prints `ok` and exits 0 when there are no problems, or 2 when there are.
+
+With `--json` it prints one object instead, for scripts and assistants: `ok`, `repoRoot`,
+`project`, `ruleFiles`, `promptAdditions`, `skills`, `image`, `adapters`, `notes` and `problems`
+(lists of strings), or `configErrors` (each with `file`, `line`, `col` and `message`) when
+`factory.yaml` doesn't load.
+
+## `factory docs`
+
+The guides and reference that came with this version of the factory, at the terminal. They're
+read from the `docs/` folder beside the CLI, so they match the version you run.
+
+| Command | Prints |
+| --- | --- |
+| `factory docs` | Every topic by name and title: start here, guides, reference |
+| `factory docs <topic>` | One topic, such as `add-a-project` or `configuration` |
+| `factory docs <topic> --sections` | Its headings |
+| `factory docs <topic> <section>` | One section, by heading or words of it: `factory docs verify-and-approve agent checks` |
+| `factory docs --search <words>` | The sections that mention every word, best first, each with the command that prints it |
+
+## `factory config explain [<key>...]`
+
+What a `factory.yaml` key means. For each key, it gives:
+
+- its type and allowed values, from the same schema that loading checks;
+- its default, from `defaults/factory.yaml`;
+- its value in this repository, when run inside a project;
+- what it does, and where it's documented, from the [configuration reference](configuration.md).
+
+Write keys with dots: `gates.change_approval`, `verify.agent_checks.security.blocks` (a name you
+chose works where the reference says `<name>`). A mapping such as `gates` lists the keys under
+it. A key that doesn't exist exits 2 and suggests the one you probably meant. With no key, it
+lists every key.
 
 ## `factory log <id>`
 

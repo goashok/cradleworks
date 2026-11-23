@@ -104,6 +104,7 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 **Start here**
 - [Quick start](docs/quickstart.md): your first factory run, end to end
 - [How it works](docs/how-it-works.md): work items, tasks, runs, stations, the event log and adapters
+- [Get help as you go](docs/guides/getting-help.md): `factory docs`, `factory config explain`, and a skill for your coding assistant
 
 **Guides**
 - [Add your own project](docs/guides/add-a-project.md): write a `.factory/` folder and switch to GitHub
