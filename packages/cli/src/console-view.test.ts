@@ -90,12 +90,19 @@ describe('console views', () => {
       ev('run_context', { workItemId: 'wi_1', taskId: 'task_1', station: 'verify' }),
       ev('context_pack_built', { role: 'reviewer', files: [{ path: '.factory/prompts/reviewer.md', bytes: 40, sha256: h('a'), kind: 'prompt' }, { path: '.factory/rules/style.md', bytes: 9, sha256: h('b'), kind: 'rule' }], dropped: ['.factory/rules/huge.md'], budgetBytes: 100 }),
       ev('context_pack_built', { files: [{ path: '.factory/rules/old.md', bytes: 9 }], dropped: [], budgetBytes: 100 }),
+      ev('context_pack_built', { role: 'implementer', files: [{ path: '.factory/skills/pdf', bytes: 9, sha256: h('c'), kind: 'skill', load: 'on-demand', lock: 'ok' }, { path: '.factory/skills/style', bytes: 9, sha256: h('d'), kind: 'skill', load: 'always', lock: 'mismatch' }], dropped: [], budgetBytes: 100, skillsMissing: ['gone'] }),
+      ev('skills_opened', { offered: ['pdf', 'forms'], opened: ['pdf'] }),
     ];
     const html = runBody({ runId: 'run_1', events }, 'raw');
     expect(html).toContain("Team's prompt addition for the reviewer: <code>.factory/prompts/reviewer.md</code>");
     expect(html).toContain(`title="${h('a')}">aaaaaaaaaa</span>`);
     expect(html).toContain('Project rules given to the reviewer: <code>.factory/rules/style.md</code>');
     expect(html).toContain('Left out, over the context budget: <code>.factory/rules/huge.md</code>');
+    expect(html).toContain('Skills given to the implementer: <code>pdf</code>');
+    expect(html).toContain('<span class="muted small">on demand</span>');
+    expect(html).toContain('<code>style</code> <span class="muted small" title="' + h('d') + '">dddddddddd</span> <span class="muted small">always</span> <span class="bad-t">changed since locked</span>');
+    expect(html).toContain('not on the base branch: <code>gone</code>');
+    expect(html).toContain('Skills the agent opened: <code>pdf</code>; not opened: <code>forms</code>');
     // Runs logged before roles and hashes were recorded still read.
     expect(html).toContain('Project rules given to the agent: <code>.factory/rules/old.md</code></li>');
   });

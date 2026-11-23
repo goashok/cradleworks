@@ -27,9 +27,19 @@ export interface Issue {
   atKey?: boolean;
 }
 
+const SKILL_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const skillName = (item: string) => (SKILL_NAME.test(item) ? undefined : `"${item}" is not a skill name (lowercase letters, digits and dashes)`);
+
 const AGENT_CHOICE: Field = {
   kind: 'object',
-  fields: { agent: { kind: 'string' }, model: { kind: 'string' } },
+  fields: {
+    agent: { kind: 'string' },
+    model: { kind: 'string' },
+    /** Skills in .factory/skills/ the role may open when its task calls for them. */
+    skills: { kind: 'stringList', check: skillName },
+    /** Skills whose SKILL.md is put into the role's prompt. */
+    always_skills: { kind: 'stringList', check: skillName },
+  },
 };
 
 const GATE_MODE: Field = { kind: 'enum', values: ['human', 'ai', 'skip'], required: true };

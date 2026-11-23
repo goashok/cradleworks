@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProjectConfig } from '../config/types.ts';
 import { Orchestrator, type OrchestratorDeps, type Progress, type Project } from './index.ts';
 import { combine, parseReview } from './verify.ts';
+import { skillHash } from './skills.ts';
 
 const baseConfig: ProjectConfig = {
   project: 'demo',
@@ -154,6 +155,56 @@ describe('prompt additions', () => {
     const { workItemId, taskId } = await start(o);
     await o.runTask(project, workItemId, taskId);
     for (const r of requests) expect(r.rolePrompt).not.toContain('adds these instructions for your role');
+  });
+});
+
+describe('skills', () => {
+  const SKILL = '---\nname: migrations\ndescription: Checks a database migration can be rolled back\n---\n# Migrations\n\nRead checklist.md and check each point.\n';
+  const STYLE = '---\nname: style-guide\ndescription: How this team writes code\n---\nPrefer small functions.\n';
+
+  it("gives each role its skills from the base branch, checks them against the lock, and logs which it opened", async () => {
+    const files = [{ path: 'SKILL.md', content: SKILL }, { path: 'checklist.md', content: '- down() undoes up()\n' }];
+    const lock = { migrations: { source: 'local', hash: skillHash(files) }, 'style-guide': { source: 'local', hash: 'sha256:stale' } };
+    const repo = join(root, 'with-skills.git');
+    await createBareRepo(repo, {
+      'README.md': '# Demo\n',
+      '.factory/rules/style.md': 'Keep it short.\n',
+      '.factory/skills/migrations/SKILL.md': SKILL,
+      '.factory/skills/migrations/checklist.md': '- down() undoes up()\n',
+      '.factory/skills/style-guide/SKILL.md': STYLE,
+      '.factory/skills.lock': JSON.stringify(lock),
+    });
+    const p: Project = { repo: localRepoRef(repo), config: { ...baseConfig, runtime: { ...baseConfig.runtime, roles: { reviewer: { model: 'review-model', skills: ['migrations', 'nope'] }, implementer: { alwaysSkills: ['style-guide'] } } } } };
+    let checklist = '';
+    const o = orchestrator({
+      implement: () => [say('Done.'), write('fixed.txt')],
+      review: () => {
+        const reviewer = requests.find((r) => r.profile.role === 'reviewer')!;
+        const at = /\(([^)]*\/migrations)\/SKILL\.md\)/.exec(reviewer.rolePrompt)![1]!;
+        checklist = readFileSync(join(at, 'checklist.md'), 'utf8');
+        return [{ kind: 'tool', tool: 'Read', input: { file_path: `${at}/SKILL.md` }, output: SKILL }, say(`Looks right.\n${PASS}`)];
+      },
+    });
+    const { workItemId, taskId } = await start(o, p);
+    await o.runTask(p, workItemId, taskId);
+
+    const implementer = requests.find((r) => r.profile.role === 'implementer')!;
+    const reviewer = requests.find((r) => r.profile.role === 'reviewer')!;
+    expect(implementer.rolePrompt).toContain('Prefer small functions.');
+    expect(implementer.rolePrompt).not.toContain('migrations');
+    expect(reviewer.rolePrompt).toContain('- migrations: Checks a database migration can be rolled back');
+    expect(reviewer.rolePrompt).not.toContain('Read checklist.md');
+    expect(checklist).toBe('- down() undoes up()\n');
+
+    const wi = (await o.getWorkItem(workItemId))!;
+    const events = [];
+    for (const run of wi.runs) events.push(...(await store.readStream(run.id)));
+    const packs = events.filter((e) => e.type === 'context_pack_built').map((e) => e.payload as { role: string; files: Array<{ path: string; kind: string; load?: string; lock?: string }>; skillsMissing?: string[] });
+    const review = packs.find((x) => x.role === 'reviewer')!;
+    expect(review.files.find((f) => f.kind === 'skill')).toMatchObject({ path: '.factory/skills/migrations', load: 'on-demand', lock: 'ok' });
+    expect(review.skillsMissing).toEqual(['nope']);
+    expect(packs.find((x) => x.role === 'implementer')!.files.find((f) => f.kind === 'skill')).toMatchObject({ load: 'always', lock: 'mismatch' });
+    expect(events.find((e) => e.type === 'skills_opened')!.payload).toEqual({ offered: ['migrations'], opened: ['migrations'] });
   });
 });
 

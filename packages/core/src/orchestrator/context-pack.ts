@@ -24,8 +24,12 @@ export interface ContextFile {
   bytes: number;
   /** `sha256:<hex>` of the content the agent was given. */
   sha256: string;
-  /** `rule`: copied for the agent to read; `prompt`: put into the role's prompt. */
-  kind: 'rule' | 'prompt';
+  /** `rule`: copied for the agent to read; `prompt`: put into the role's prompt; `skill`: a skill folder. */
+  kind: 'rule' | 'prompt' | 'skill';
+  /** For a skill: offered for the agent to open, or put into the prompt. */
+  load?: 'on-demand' | 'always';
+  /** For a skill: whether its folder matches `.factory/skills.lock`. */
+  lock?: 'ok' | 'mismatch' | 'unlocked';
 }
 
 export interface ContextPack {
@@ -34,6 +38,8 @@ export interface ContextPack {
   /** Matched files left out because the budget ran out. */
   dropped: string[];
   budgetBytes: number;
+  /** Names of the skills that fit. */
+  skills: string[];
   /** The rules that fit, with their content, to copy into the sandbox. */
   rules: Array<{ path: string; content: string }>;
   /** The role's prompt addition, when there is one and it fit. */
@@ -56,10 +62,21 @@ export function matchRules(tree: string[], patterns: string[]): string[] {
   return out;
 }
 
+/** A skill as the pack weighs it: an always skill costs its SKILL.md; an on-demand one only its line. */
+export interface PackSkill {
+  name: string;
+  load: 'on-demand' | 'always';
+  hash: string;
+  lock: 'ok' | 'mismatch' | 'unlocked';
+  /** What goes into the prompt for it. */
+  promptBytes: number;
+}
+
 export function buildContextPack(
   rules: Array<{ path: string; content: string }>,
   budgetBytes = DEFAULT_CONTEXT_BUDGET_BYTES,
   addition?: { path: string; text: string },
+  skills: PackSkill[] = [],
 ): ContextPack {
   const files: ContextFile[] = [];
   const dropped: string[] = [];
@@ -76,6 +93,18 @@ export function buildContextPack(
       added = addition;
     }
   }
+  // Then skills: named for this role, so ahead of the rules every role shares.
+  const keptSkills: string[] = [];
+  for (const skill of skills) {
+    const path = `.factory/skills/${skill.name}`;
+    if (used + skill.promptBytes > budgetBytes) {
+      dropped.push(path);
+      continue;
+    }
+    used += skill.promptBytes;
+    files.push({ path, bytes: skill.promptBytes, sha256: skill.hash, kind: 'skill', load: skill.load, lock: skill.lock });
+    keptSkills.push(skill.name);
+  }
   for (const rule of rules) {
     const bytes = Buffer.byteLength(rule.content);
     if (used + bytes > budgetBytes) {
@@ -86,7 +115,7 @@ export function buildContextPack(
     files.push({ path: rule.path, bytes, sha256: sha256(rule.content), kind: 'rule' });
     kept.push(rule);
   }
-  return { files, dropped, budgetBytes, rules: kept, ...(added ? { addition: added } : {}) };
+  return { files, dropped, budgetBytes, rules: kept, skills: keptSkills, ...(added ? { addition: added } : {}) };
 }
 
 /** The role prompt with the team's addition after it, marked so the agent knows whose words they are. */

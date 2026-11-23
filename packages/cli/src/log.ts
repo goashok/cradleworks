@@ -59,11 +59,16 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
       const net = p.network as { mode?: string; allow?: string[] } | undefined;
       return line('sandbox', `${String(p.sandboxId ?? '')} on ${String(p.branch ?? '')} from ${String(p.baseRef ?? '')}; network ${net?.mode ?? '?'}: ${(net?.allow ?? []).join(', ')}`);
     }
+    case 'skills_opened': {
+      const opened = (p.opened as string[] | undefined) ?? [];
+      const offered = (p.offered as string[] | undefined) ?? [];
+      return line('skills', `opened ${opened.length ? opened.join(', ') : 'none'} of ${offered.join(', ')}`);
+    }
     case 'context_pack_built': {
       const files = (p.files as Array<{ path: string; kind?: string; sha256?: string }> | undefined) ?? [];
       const dropped = (p.dropped as unknown[] | undefined) ?? [];
       const hash = (f: { sha256?: string }) => (f.sha256 ? ` ${f.sha256.replace('sha256:', '').slice(0, 10)}` : '');
-      const shown = files.map((f) => `${f.kind === 'prompt' ? 'prompt addition ' : ''}${f.path}${hash(f)}`);
+      const shown = files.map((f) => `${f.kind === 'prompt' ? 'prompt addition ' : f.kind === 'skill' ? `skill (${(f as { load?: string }).load ?? 'on-demand'}${(f as { lock?: string }).lock && (f as { lock?: string }).lock !== 'ok' ? `, ${(f as { lock?: string }).lock}` : ''}) ` : ''}${f.path}${hash(f)}`);
       return line('context', `${p.role ? `${String(p.role)}: ` : ''}${shown.join(', ')}${dropped.length ? ` (${dropped.length} dropped)` : ''}`);
     }
     case 'agent_started': {

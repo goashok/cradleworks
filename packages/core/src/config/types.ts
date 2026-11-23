@@ -32,7 +32,7 @@ export interface ProjectConfig {
   };
   runtime: AgentChoice & {
     /** Per-role overrides, e.g. a different model for the reviewer. */
-    roles: Partial<Record<AgentRole, Partial<AgentChoice>>>;
+    roles: Partial<Record<AgentRole, RoleConfig>>;
   };
   stack: {
     image: string;
@@ -72,6 +72,14 @@ export interface ProjectConfig {
   commands?: { deny: string[] };
   /** Sandbox network egress. */
   network: NetworkPolicy;
+}
+
+/** One role's overrides, and the skills it is given. */
+export interface RoleConfig extends Partial<AgentChoice> {
+  /** Skills in `.factory/skills/` the role may open when its task calls for them. */
+  skills?: string[];
+  /** Skills whose SKILL.md is put into the role's prompt. */
+  alwaysSkills?: string[];
 }
 
 /** The agent and model for a role: the role's override where set, else the project default. */

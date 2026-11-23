@@ -11,6 +11,7 @@ import { AGENT_ROLES, type AgentRuntime, type CI, type ItemRef, type Tracker } f
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
+import { checkSkills, skillsCommand } from './skills.ts';
 import { AgentsByName } from './agents.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
@@ -57,6 +58,11 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await consoleCommand(rest, io);
       case 'review':
         return await review(rest, io);
+      case 'skills': {
+        const root = findProjectRoot(io.cwd);
+        if (!root) throw new UsageError(`no .factory/factory.yaml in ${io.cwd} or any folder above it`);
+        return await skillsCommand(rest, io, root, loadProjectConfig(root));
+      }
       case undefined:
       case 'help':
       case '--help':
@@ -108,10 +114,13 @@ const USAGE = `Usage:
                                     Verify's reviewer would; nothing is pushed or merged. Exits 0
                                     on pass, 1 on rework or escalate, 3 if it couldn't review
   factory validate [<dir>]          Check a project's .factory/ setup without running anything
+  factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <n>] | update <name> [--ref <ref>] | lock <name>
+                                    Vendor agent skills into .factory/skills/ and pin them in
+                                    .factory/skills.lock; nothing is committed
   factory log <run-id|id> [--full] [--json]
+                                    Replay a run's event log: every step, tool call and file change
   factory console [--port <n>]      A local web page of the work, what waits on a person, spend and
                                     run logs, with buttons for approve, send back, retry, extend, cancel
-                                    Replay a run's event log: every step, tool call and file change
 
 <id> is a work item id (wi_…) or a task id (task_…).
 
@@ -164,6 +173,10 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
     if (!found) problems.push(`context.include: ${path} does not exist`);
   }
 
+  const skills = checkSkills(repoRoot, config);
+  problems.push(...skills.problems);
+  notes.push(...skills.notes);
+
   // Prompt additions: one file per role, added to that role's prompt once on the base branch.
   const additions = globSync('.factory/prompts/*.md', { cwd: repoRoot }).sort();
   for (const path of additions) {
@@ -179,7 +192,7 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   }
 
   const rules = config.context.rules.flatMap((p) => globSync(p, { cwd: repoRoot })).length;
-  io.stdout(`${relativeOrSelf(io.cwd, repoRoot)}: project ${config.project}, ${rules} rule file(s), ${additions.length} prompt addition(s), image ${config.stack.image}\n`);
+  io.stdout(`${relativeOrSelf(io.cwd, repoRoot)}: project ${config.project}, ${rules} rule file(s), ${additions.length} prompt addition(s), ${skills.count} skill(s), image ${config.stack.image}\n`);
   for (const note of notes) io.stdout(`  note: ${note}\n`);
   for (const problem of problems) io.stderr(`  problem: ${problem}\n`);
   io.stdout(problems.length === 0 ? 'ok\n' : '');

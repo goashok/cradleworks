@@ -15,6 +15,7 @@ factory budget extend <id> [--usd <n>] [--no-run]
 factory budget extend --user <name> --usd <n> [--month]
 factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--json]
 factory validate [<dir>]
+factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <name>] | update <name> [--ref <ref>] | lock <name>
 factory log <run-id|work-item-id> [--full] [--json]
 factory help
 ```
@@ -180,6 +181,21 @@ attempts, spend so far, any protected files it changes, the latest Verify eviden
 command to run), the work item's total spend, its runs (station, outcome,
 start time) and its gate decisions (gate, verdict, mode, who).
 
+## `factory skills`
+
+Vendors agent skills into `.factory/skills/` and pins them in `.factory/skills.lock`. Fetching
+happens on this machine; nothing is committed, so the result is a change to review and commit.
+
+| Command | Does |
+| --- | --- |
+| `list` | Each vendored skill: locked, not locked or changed since locked; where it came from; which roles use it |
+| `add <git-url> [--path <dir>] [--ref <ref>]` | Clones the repository, takes the folder at `--path` (with a `SKILL.md`), copies it to `.factory/skills/<name>/`, and records the URL, path, ref, commit and a content hash. Prints the files, the whole `SKILL.md` and any scripts. `--name` overrides the name in `SKILL.md` |
+| `add <folder>` | The same for a folder on this machine, recorded as your own (`local`) |
+| `update <name> [--ref <ref>]` | Fetches the locked source again (at `--ref`, or the locked ref), shows what changed, and replaces the copy and its lock entry |
+| `lock <name>` | Records the folder as it is now. A changed copy of someone else's skill becomes your own, with where it was forked from |
+
+Exit status: 0 done, 2 refused (bad source, an existing skill on `add`, a local skill on `update`).
+
 ## `factory validate [<dir>]`
 
 Checks a project's `.factory/` setup without touching git, the network or the state store. It
@@ -193,6 +209,7 @@ It reports:
 - `context.rules` patterns that match no file
 - `context.include` paths that don't exist
 - prompt additions (`.factory/prompts/*.md`) not named for a role, and empty ones (a note)
+- skills: a folder without a valid `SKILL.md`, one not in `.factory/skills.lock` or changed since it was locked, a lock entry with no folder, and a role naming a skill that isn't there; a vendored skill no role uses is a note
 - whether `stack.image` has been built on this machine (a note, not an error)
 
 It prints `ok` and exits 0 when there are no problems.

@@ -35,7 +35,25 @@ import { resolveAgent, type ProjectConfig } from '../config/types.ts';
 import type { WorkItemEvent } from '../domain/events.ts';
 import { newId, type IdKind } from '../domain/ids.ts';
 import { TERMINAL_WORK_ITEM_STATES, type CheckResult, type CiResult, type Evidence, type GateMode, type ReviewResult, type Station, type Task, type TaskState, type VerifyVerdict, type WorkItem, type WorkItemState } from '../domain/types.ts';
-import { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES, matchRules, promptAdditionPath, RULES_DIR, withAddition, type ContextPack } from './context-pack.ts';
+import { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES, matchRules, promptAdditionPath, RULES_DIR, withAddition, type ContextPack, type PackSkill } from './context-pack.ts';
+import { parseLock, parseSkill, skillHash, skillsOpened, skillsPrompt, SKILLS_DIR, SKILLS_LOCK, type GivenSkill, type SkillFile } from './skills.ts';
+
+/** Under the sandbox's reference folder, where a role's skills are copied. */
+const SKILLS_SUBDIR = 'skills';
+
+/** What #context hands an agent run: the pack, where to read rules, and the skills given. */
+interface GivenContext extends ContextPack {
+  readPaths: string[];
+  given: GivenSkill[];
+  /** On-demand skills, to record which the agent opened. */
+  opened: { root: string; names: string[] };
+}
+
+/** The role prompt, then the role's skills, then the team's addition. */
+function withContext(rolePrompt: string, ctx: GivenContext): string {
+  const skills = skillsPrompt(ctx.given);
+  return withAddition(skills ? `${rolePrompt}\n\n${skills}` : rolePrompt, ctx.addition);
+}
 import { implementerPrompt, reviewerPrompt } from './prompts.ts';
 import {
   baseDirective,
@@ -342,12 +360,12 @@ export class Orchestrator {
         runId,
         profile,
         sandbox,
-        rolePrompt: withAddition(implementerPrompt(project.config, contextFiles), pack.addition),
+        rolePrompt: withContext(implementerPrompt(project.config, contextFiles), pack),
         input,
         contextFiles,
         tools: { allow: [], deny: [] },
         limits,
-      }, { project, workItemId, taskId });
+      }, { project, workItemId, taskId, skills: pack.opened });
       const outcome: AgentOutcome = done?.outcome ?? 'failed';
       const buildStop = done?.error;
       if (outcome !== 'succeeded' && buildStop && isBudgetStop(buildStop)) {
@@ -1079,12 +1097,12 @@ export class Orchestrator {
         runId: reviewAttempt === 1 ? runId : `${runId}-review2`,
         profile,
         sandbox,
-        rolePrompt: withAddition(reviewerPrompt(project.config, contextFiles, base), pack.addition),
+        rolePrompt: withContext(reviewerPrompt(project.config, contextFiles, base), pack),
         input: reviewAttempt === 1 ? input : `${input}\n\n${REVIEW_RETRY_NOTE}`,
         contextFiles,
         tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
         limits,
-      }, charge);
+      }, { ...charge, skills: pack.opened });
       cost += done?.total.costUsd ?? 0;
       const lost = done?.outcome === 'failed' && !(done.error && isBudgetStop(done.error));
       const unreadable = done?.outcome === 'succeeded' && isUnreadableReview(parseReview(done.summary, profile.model));
@@ -1175,7 +1193,7 @@ export class Orchestrator {
       step = 'agent';
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-      const done = await this.#runAgent(log, { runId: opts.agentRunId ?? runId, profile, sandbox, rolePrompt: withAddition(opts.rolePrompt(contextFiles), pack.addition), input: opts.input, contextFiles, tools: { allow: [], deny: READ_ONLY }, limits }, { project, workItemId: wi.id });
+      const done = await this.#runAgent(log, { runId: opts.agentRunId ?? runId, profile, sandbox, rolePrompt: withContext(opts.rolePrompt(contextFiles), pack), input: opts.input, contextFiles, tools: { allow: [], deny: READ_ONLY }, limits }, { project, workItemId: wi.id, skills: pack.opened });
       const cost = done?.total.costUsd ?? 0;
       if (done?.outcome !== 'succeeded') return { ok: false, error: `the ${opts.role} agent run ${done?.outcome ?? 'ended without a result'}${done?.error ? `: ${done.error}` : ''}`, cost };
       return { ok: true, summary: done.summary, cost };
@@ -1235,7 +1253,7 @@ export class Orchestrator {
       const contextFiles = pack.readPaths;
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-      const done = await this.#runAgent(log, { runId: `${runId}-tester`, profile, sandbox, rolePrompt: withAddition(testerPrompt(project.config, contextFiles), pack.addition), input: testerInput(spec, task), contextFiles, tools: { allow: [], deny: [] }, limits }, { project, workItemId, taskId: task.id });
+      const done = await this.#runAgent(log, { runId: `${runId}-tester`, profile, sandbox, rolePrompt: withContext(testerPrompt(project.config, contextFiles), pack), input: testerInput(spec, task), contextFiles, tools: { allow: [], deny: [] }, limits }, { project, workItemId, taskId: task.id, skills: pack.opened });
       const cost = done?.total.costUsd ?? 0;
       if (done?.outcome !== 'succeeded') {
         await log.write({ type: 'acceptance_tests', files: [], note: `the tester run ${done?.outcome ?? 'ended without a result'}` });
@@ -1285,12 +1303,12 @@ export class Orchestrator {
       runId: `${runId}-test-review`,
       profile,
       sandbox,
-      rolePrompt: withAddition(testReviewPrompt(project.config, contextFiles), pack.addition),
+      rolePrompt: withContext(testReviewPrompt(project.config, contextFiles), pack),
       input: testReviewInput(spec, task, tests, failure, dispute),
       contextFiles,
       tools: { allow: [], deny: [] },
       limits,
-    }, { project, workItemId, taskId: task.id });
+    }, { project, workItemId, taskId: task.id, skills: pack.opened });
     const verdict = done?.outcome === 'succeeded' ? parseTestReview(done.summary) : undefined;
     let result: { verdict: 'revised' | 'upheld'; reasons: string[]; tests?: { files: string[]; patch: string } };
     if (!verdict) {
@@ -1511,7 +1529,7 @@ export class Orchestrator {
    * the sandbox's reference folder, outside the checkout, and the agent is pointed there. Logged
    * with a hash per file.
    */
-  async #context(project: Project, sandbox: SandboxHandle, role: AgentRole, base: string, log: RunLog): Promise<ContextPack & { readPaths: string[] }> {
+  async #context(project: Project, sandbox: SandboxHandle, role: AgentRole, base: string, log: RunLog): Promise<GivenContext> {
     const ref = `origin/${base}`;
     const git = (args: string[]) => this.#deps.sandbox.exec(sandbox, ['git', ...args]);
     const tree = await git(['ls-tree', '-r', '-z', '--name-only', ref]);
@@ -1524,20 +1542,65 @@ export class Orchestrator {
     const additionPath = promptAdditionPath(role);
     const shown = await git(['show', `${ref}:${additionPath}`]);
     const addition = shown.exitCode === 0 && shown.stdout.trim() ? { path: additionPath, text: shown.stdout } : undefined;
-    const pack = buildContextPack(rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES, addition);
+
+    // The role's skills, from the base branch's .factory/skills/, checked against the lock.
+    const roleConfig = project.config.runtime.roles[role] ?? {};
+    const wanted: Array<{ name: string; load: 'on-demand' | 'always' }> = [
+      ...(roleConfig.alwaysSkills ?? []).map((name) => ({ name, load: 'always' as const })),
+      ...(roleConfig.skills ?? []).filter((n) => !(roleConfig.alwaysSkills ?? []).includes(n)).map((name) => ({ name, load: 'on-demand' as const })),
+    ];
+    const entries = tree.stdout.split('\0').filter(Boolean);
+    const lockFile = wanted.length ? await git(['show', `${ref}:${SKILLS_LOCK}`]) : undefined;
+    const lock = parseLock(lockFile?.exitCode === 0 ? lockFile.stdout : undefined);
+    const skillsRoot = `${sandbox.contextSandboxPath}/${SKILLS_SUBDIR}`;
+    const loaded: Array<{ files: SkillFile[]; given: GivenSkill; pack: PackSkill }> = [];
+    const missing: string[] = [];
+    for (const { name, load } of wanted) {
+      const prefix = `${SKILLS_DIR}/${name}/`;
+      const files: SkillFile[] = [];
+      for (const path of entries.filter((p) => p.startsWith(prefix))) {
+        const file = await git(['show', `${ref}:${path}`]);
+        if (file.exitCode === 0) files.push({ path: path.slice(prefix.length), content: file.stdout });
+      }
+      const manifest = parseSkill(files.find((f) => f.path === 'SKILL.md')?.content ?? '');
+      if (!manifest) {
+        missing.push(name);
+        continue;
+      }
+      const hash = skillHash(files);
+      const locked = lock[name];
+      const given: GivenSkill = { name, description: manifest.description, load, readAt: `${skillsRoot}/${name}`, body: manifest.body };
+      const promptBytes = Buffer.byteLength(skillsPrompt([given]));
+      loaded.push({ files, given, pack: { name, load, hash, lock: !locked ? 'unlocked' : locked.hash === hash ? 'ok' : 'mismatch', promptBytes } });
+    }
+
+    const pack = buildContextPack(rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES, addition, loaded.map((l) => l.pack));
     for (const rule of pack.rules) {
       const target = join(sandbox.contextPath, RULES_DIR, rule.path);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, rule.content);
     }
-    await log.write({ type: 'context_pack_built', role, base: ref, files: pack.files, dropped: pack.dropped, budgetBytes: pack.budgetBytes });
-    return { ...pack, readPaths: pack.rules.map((r) => `${sandbox.contextSandboxPath}/${RULES_DIR}/${r.path}`) };
+    const given = loaded.filter((l) => pack.skills.includes(l.given.name));
+    for (const { files, given: skill } of given) {
+      for (const file of files) {
+        const target = join(sandbox.contextPath, SKILLS_SUBDIR, skill.name, file.path);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, file.content);
+      }
+    }
+    await log.write({ type: 'context_pack_built', role, base: ref, files: pack.files, dropped: pack.dropped, budgetBytes: pack.budgetBytes, ...(missing.length ? { skillsMissing: missing } : {}) });
+    return {
+      ...pack,
+      readPaths: pack.rules.map((r) => `${sandbox.contextSandboxPath}/${RULES_DIR}/${r.path}`),
+      given: given.map((g) => g.given),
+      opened: { root: skillsRoot, names: given.filter((g) => g.given.load === 'on-demand').map((g) => g.given.name) },
+    };
   }
 
   async #runAgent(
     log: RunLog,
     request: Parameters<AgentRuntime['start']>[0],
-    charge: { project: Project; workItemId?: string; taskId?: string },
+    charge: { project: Project; workItemId?: string; taskId?: string; skills?: { root: string; names: string[] } },
   ): Promise<Extract<AgentEvent, { type: 'done' }> | undefined> {
     // A run for no work item (a review by hand) is held to its own limit and charged to no one.
     const wi = charge.workItemId ? await this.#mustLoad(charge.workItemId) : undefined;
@@ -1554,11 +1617,15 @@ export class Orchestrator {
     const tools = commands.length ? { ...request.tools, commands } : request.tools;
     const run = await this.#deps.runtime.start({ ...request, tools, limits: { ...request.limits, maxSpendUsd: cap } });
     let done: Extract<AgentEvent, { type: 'done' }> | undefined;
+    const toolInputs: unknown[] = [];
     for await (const event of run.events) {
       await log.write({ type: 'agent_event', event });
       if (event.type === 'denied') await log.write({ type: 'command_denied', tool: event.tool, detail: event.detail });
+      if (event.type === 'tool_call') toolInputs.push(event.input);
       if (event.type === 'done') done = event;
     }
+    // Which on-demand skills the agent read, so a team can see one that is never used.
+    if (charge.skills?.names.length) await log.write({ type: 'skills_opened', offered: charge.skills.names, opened: skillsOpened(toolInputs, charge.skills.root, charge.skills.names) });
     if (wi) await this.#emit(wi.id, [
       {
         type: 'agent_cost_recorded',

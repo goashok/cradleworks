@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBareRepo, FakeTracker, git, ScriptedAgentRuntime, type ScriptStep } from '@cradleworks/contracts/fakes';
@@ -214,7 +214,7 @@ describe('factory validate', () => {
   it('checks a project without running anything', async () => {
     const r = await factory(['validate']);
     expect(r).toMatchObject({ code: 0, stderr: '' });
-    expect(r.stdout).toContain('project demo, 1 rule file(s), 0 prompt addition(s), image unused');
+    expect(r.stdout).toContain('project demo, 1 rule file(s), 0 prompt addition(s), 0 skill(s), image unused');
     expect(r.stdout).toMatch(/ok\n$/);
   });
 
@@ -361,5 +361,75 @@ describe('factory watch', () => {
     writeFileSync(join(home, 'watch.pid'), `${process.ppid}\n`);
     writeFileSync(join(checkout, '.factory/factory.yaml'), WATCH_YAML);
     expect(await factory(['watch', '--once'], checkout, watchRegistry(new FakeTracker()))).toMatchObject({ code: 2, stderr: expect.stringMatching(/another factory watch is running/) });
+  });
+});
+
+describe('factory skills', () => {
+  const SKILL = (d: string) => `---\nname: migrations\ndescription: ${d}\n---\nCheck down() undoes up().\n`;
+  const withRole = FACTORY_YAML + 'runtime: { agent: scripted, model: none, roles: { reviewer: { skills: [migrations] } } }\n';
+
+  it('vendors a skill from a folder, pins it, and validate keeps it honest', async () => {
+    const src = join(root, 'my-skill');
+    mkdirSync(join(src, 'scripts'), { recursive: true });
+    writeFileSync(join(src, 'SKILL.md'), SKILL('Rollback checks'));
+    writeFileSync(join(src, 'scripts', 'check.sh'), '#!/bin/sh\necho ok\n');
+    writeFileSync(join(checkout, '.factory/factory.yaml'), withRole.replace('runtime: { agent: scripted, model: none }\n', ''));
+
+    const added = await factory(['skills', 'add', src]);
+    expect(added).toMatchObject({ code: 0, stderr: '' });
+    expect(added.stdout).toContain('Check down() undoes up().');
+    expect(added.stdout).toContain('1 script(s) an agent may run inside the sandbox: scripts/check.sh');
+    expect(existsSync(join(checkout, '.factory/skills/migrations/scripts/check.sh'))).toBe(true);
+    expect(JSON.parse(readFileSync(join(checkout, '.factory/skills.lock'), 'utf8')).migrations).toMatchObject({ source: 'local', hash: expect.stringMatching(/^sha256:/) });
+    expect((await factory(['skills', 'list'])).stdout).toBe('migrations  locked, from your own; used by reviewer\n');
+    expect(await factory(['validate'])).toMatchObject({ code: 0, stdout: expect.stringContaining('1 skill(s)') });
+    expect((await factory(['skills', 'add', src])).stderr).toContain('already exists; use factory skills update migrations');
+
+    // A hand edit fails validation until it is locked as the team's own.
+    writeFileSync(join(checkout, '.factory/skills/migrations/SKILL.md'), SKILL('Rollback checks, edited'));
+    const edited = await factory(['validate']);
+    expect(edited.code).toBe(2);
+    expect(edited.stderr).toContain("doesn't match .factory/skills.lock");
+    expect(await factory(['skills', 'lock', 'migrations'])).toMatchObject({ code: 0 });
+    expect((await factory(['validate'])).code).toBe(0);
+  });
+
+  it('vendors from a git repository at a ref, records the commit, and updates to a newer one', async () => {
+    const upstream = join(root, 'skills.git');
+    await createBareRepo(upstream, { 'skills/migrations/SKILL.md': SKILL('v1'), 'README.md': 'many skills\n' });
+    const v1 = (await git(['--git-dir', upstream, 'rev-parse', 'main'])).stdout.trim();
+    writeFileSync(join(checkout, '.factory/factory.yaml'), withRole.replace('runtime: { agent: scripted, model: none }\n', ''));
+
+    expect(await factory(['skills', 'add', upstream, '--path', 'skills/migrations', '--ref', 'main'])).toMatchObject({ code: 0 });
+    const lock = JSON.parse(readFileSync(join(checkout, '.factory/skills.lock'), 'utf8'));
+    expect(lock.migrations).toMatchObject({ source: upstream, path: 'skills/migrations', ref: 'main', commit: v1 });
+    expect(existsSync(join(checkout, '.factory/skills/migrations/README.md'))).toBe(false);
+
+    // A newer upstream version, then update.
+    const work = join(root, 'upstream-work');
+    await git(['clone', '--quiet', upstream, work]);
+    writeFileSync(join(work, 'skills/migrations/SKILL.md'), SKILL('v2'));
+    await git(['-C', work, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-am', 'v2']);
+    await git(['-C', work, 'push', '--quiet', 'origin', 'main']);
+    const updated = await factory(['skills', 'update', 'migrations']);
+    expect(updated).toMatchObject({ code: 0 });
+    expect(readFileSync(join(checkout, '.factory/skills/migrations/SKILL.md'), 'utf8')).toContain('description: v2');
+    expect((await factory(['validate'])).code).toBe(0);
+
+    // Changing a vendored copy and locking it makes it the team's own, saying where it came from.
+    writeFileSync(join(checkout, '.factory/skills/migrations/SKILL.md'), SKILL('ours'));
+    expect((await factory(['skills', 'lock', 'migrations'])).stdout).toContain('now your own, forked from');
+    expect((await factory(['skills', 'update', 'migrations'])).stderr).toContain('is your own skill');
+  });
+
+  it('reports a role naming a missing skill, and a folder without a SKILL.md', async () => {
+    writeFileSync(join(checkout, '.factory/factory.yaml'), withRole.replace('runtime: { agent: scripted, model: none }\n', ''));
+    mkdirSync(join(checkout, '.factory/skills/empty'), { recursive: true });
+    writeFileSync(join(checkout, '.factory/skills/empty/notes.md'), 'x\n');
+    const r = await factory(['validate']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('use the skill "migrations", but .factory/skills/migrations/ is missing');
+    expect(r.stderr).toContain('.factory/skills/empty: needs a SKILL.md');
+    expect(r.stdout).toContain('.factory/skills/empty is vendored but no role uses it');
   });
 });

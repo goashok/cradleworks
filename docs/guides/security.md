@@ -82,6 +82,11 @@ goes in the agent's environment instead.)
   (`/factory` in the container, read-only to the agent) and points the agent there; additions
   go into the role's prompt. A change that edits a rule is judged by the rule as it stands, and
   the edit takes effect once it's merged.
+- Skills are read the same way, from the base branch's `.factory/skills/`, and checked against
+  `.factory/skills.lock` on every run; the run log says when one doesn't match. Fetching a skill
+  happens only on your machine, through `factory skills add` or `update`, never in a run. Scripts in
+  a skill run only if the agent runs them, inside the sandbox, under the same deny list and network
+  allow-list as everything else.
 
 **A secret scan before every push.** What the run added is scanned for private keys, passwords in
 URLs, the token formats of the common hosted services, and files that hold secrets by

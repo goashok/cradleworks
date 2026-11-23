@@ -33,6 +33,7 @@ effect in the milestone shown.
 | --- | --- | --- | --- |
 | `agent` | string | ✅ | The agent to run: `claude-code`, or `codex` (the Codex CLI, with an OpenAI key in `OPENAI_API_KEY` or the Keychain item `cradleworks-openai-api-key`). See [Codex](#codex) for how it differs. |
 | `model` | string | ✅ | The model id passed to the agent, e.g. `claude-sonnet-5-5`. |
+| `roles.<role>.skills` / `.always_skills` | list of skill names | ✅ | Skills in `.factory/skills/` the role is given: listed for the agent to open when the task calls for it, or (always) with its `SKILL.md` in the prompt. Vendor them with `factory skills add`. See [Skills](../guides/add-a-project.md#skills). |
 | `roles.<role>.agent` / `.model` | string | ✅ | Override the agent or model for one role: `specifier` (Specify), `planner` (Plan), `implementer` (Build), `tester` (acceptance tests in Verify), and `reviewer` (Verify, and the ai spec and plan checks). Roles can use different agents, e.g. Codex reviewing what Claude Code built. Every agent the config names is set up when a command starts, so a missing credential is reported then. |
 
 ### Codex

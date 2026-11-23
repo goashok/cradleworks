@@ -157,7 +157,7 @@ type RawGate = 'human' | 'ai' | 'skip';
 interface RawConfig {
   project: string;
   adapters: ProjectConfig['adapters'];
-  runtime: { agent: string; model: string; roles?: ProjectConfig['runtime']['roles'] };
+  runtime: { agent: string; model: string; roles?: Record<string, { agent?: string; model?: string; skills?: string | string[]; always_skills?: string | string[] }> };
   stack: { image: string; build: string; test: string; [name: string]: string };
   context: { include: string | string[]; rules: string | string[] };
   gates: { spec_approval: RawGate; plan_check: RawGate; change_approval: RawGate; auto_merge: boolean };
@@ -173,6 +173,19 @@ interface RawConfig {
 const list = (v: string | string[]): string[] => (typeof v === 'string' ? [v] : [...v]);
 const gate = (v: RawGate): GateMode => (v === 'skip' ? 'skipped' : v);
 
+function toRoles(raw: NonNullable<RawConfig['runtime']['roles']>): ProjectConfig['runtime']['roles'] {
+  const out: ProjectConfig['runtime']['roles'] = {};
+  for (const [role, r] of Object.entries(raw)) {
+    out[role as keyof typeof out] = {
+      ...(r.agent !== undefined ? { agent: r.agent } : {}),
+      ...(r.model !== undefined ? { model: r.model } : {}),
+      ...(r.skills !== undefined ? { skills: list(r.skills) } : {}),
+      ...(r.always_skills !== undefined ? { alwaysSkills: list(r.always_skills) } : {}),
+    };
+  }
+  return out;
+}
+
 function toProjectConfig(raw: RawConfig): ProjectConfig {
   const { image, ...commands } = raw.stack;
   const budgets: ProjectConfig['budgets'] = {
@@ -185,7 +198,7 @@ function toProjectConfig(raw: RawConfig): ProjectConfig {
   return {
     project: raw.project,
     adapters: { ...raw.adapters },
-    runtime: { agent: raw.runtime.agent, model: raw.runtime.model, roles: raw.runtime.roles ?? {} },
+    runtime: { agent: raw.runtime.agent, model: raw.runtime.model, roles: toRoles(raw.runtime.roles ?? {}) },
     stack: { image, commands },
     context: { include: list(raw.context.include), rules: list(raw.context.rules) },
     gates: {

@@ -172,6 +172,47 @@ once it's merged. It shares the rules' 256 KB budget and is loaded first. Each r
 and the run page in `factory console`, lists every rule file and addition the agent was given,
 with a content hash, so you can tell exactly which version a run used.
 
+### Skills
+
+A skill is a folder of instructions an agent follows for one kind of work: a `SKILL.md` that
+starts with a `name` and `description`, then the steps, plus any checklists or scripts it points
+to. Skills from marketplaces and other teams use this format, and you can write your own.
+
+Vendor one into the repository, pinned to a version:
+
+```sh
+factory skills add https://github.com/<owner>/<skills-repo>.git --path <folder> --ref <tag-or-commit>
+factory skills add ./my-skill          # a folder of your own
+```
+
+This copies the folder to `.factory/skills/<name>/`, records where it came from, the commit and
+a content hash in `.factory/skills.lock`, and prints the whole `SKILL.md` and any scripts so you
+can read them first. Nothing is committed. Then give it to the roles that should have it:
+
+```yaml
+runtime:
+  roles:
+    reviewer:
+      skills: [migrations]         # listed; the agent opens it when the task calls for it
+    implementer:
+      always_skills: [house-style] # its SKILL.md goes into the agent's prompt
+```
+
+On-demand skills cost almost nothing until used; the run log records which ones the agent
+opened, so you can see a skill that is never used and make it `always`, or drop it. Always
+skills share the 256 KB context budget with rules.
+
+Like rules, skills are read from the base branch, copied into the sandbox's read-only reference
+folder, and logged with a hash per run. `factory skills update <name>` fetches a newer version
+and shows the change; `factory skills lock <name>` records a hand edit, and a changed copy of
+someone else's skill becomes your own. `factory skills list` shows each one, where it came from,
+and which roles use it. `factory validate` fails when a vendored skill doesn't match the lock, so
+an edit is never silent.
+
+A skill can't widen the sandbox. If its scripts need a tool, add it to your image; if they need a
+host, add it to `sandbox.network.allow`. Treat a marketplace skill like a new dependency: read it
+before you merge it. It lives under `.factory/`, so merging it always needs a person.
+
 ## 4. Switch to GitHub
 
 With `scm: github`, the factory pushes branches and opens real pull requests on the repository
@@ -207,5 +248,6 @@ Then [write a good task](writing-tasks.md), and [follow the run](runs-and-logs.m
 - [ ] the hosts your build downloads from in `sandbox.network.allow`
 - [ ] one to three rule files about what's unusual in this codebase
 - [ ] optional: a prompt addition for a role that should work differently here
+- [ ] optional: skills for the roles that need them, vendored with `factory skills add`
 - [ ] `factory validate` says `ok`
 - [ ] a GitHub token (`GITHUB_TOKEN` or `gh auth login`) and a Claude credential

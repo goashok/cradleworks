@@ -500,15 +500,27 @@ function environment(events: StoredEvent[]): string {
       const net = p.network as { mode?: string; allow?: string[] } | undefined;
       rows.push(`<li>Sandbox <code>${esc(p.sandboxId)}</code> on <code>${esc(p.branch)}</code>; network ${esc(net?.mode ?? '?')}${net?.allow?.length ? `: ${net.allow.map((h) => `<code>${esc(h)}</code>`).join(' ')}` : ''}</li>`);
     } else if (e.type === 'context_pack_built') {
-      const files = (p.files as Array<{ path: string; kind?: string; sha256?: string }> | undefined) ?? [];
+      const files = (p.files as Array<{ path: string; kind?: string; sha256?: string; load?: string; lock?: string }> | undefined) ?? [];
       const dropped = (p.dropped as string[] | undefined) ?? [];
       const file = (f: { path: string; sha256?: string }) => `<code>${esc(f.path)}</code>${f.sha256 ? ` <span class="muted small" title="${esc(f.sha256)}">${esc(f.sha256.replace('sha256:', '').slice(0, 10))}</span>` : ''}`;
       const added = files.filter((f) => f.kind === 'prompt');
-      const rules = files.filter((f) => f.kind !== 'prompt');
+      const skills = files.filter((f) => f.kind === 'skill');
+      const rules = files.filter((f) => f.kind !== 'prompt' && f.kind !== 'skill');
       const who = p.role ? `the ${esc(p.role)}` : 'the agent';
       if (added.length) rows.push(`<li>Team's prompt addition for ${who}: ${added.map(file).join(', ')}</li>`);
+      if (skills.length) {
+        const lockNote = (l?: string) => (l === 'mismatch' ? ' <span class="bad-t">changed since locked</span>' : l === 'unlocked' ? ' <span class="bad-t">not locked</span>' : '');
+        rows.push(`<li>Skills given to ${who}: ${skills.map((f) => `${file({ ...f, path: f.path.replace(/^\.factory\/skills\//, '') })} <span class="muted small">${f.load === 'always' ? 'always' : 'on demand'}</span>${lockNote(f.lock)}`).join(', ')}</li>`);
+      }
+      const missing = (p.skillsMissing as string[] | undefined) ?? [];
+      if (missing.length) rows.push(`<li class="bad-t">Skills named in factory.yaml but not on the base branch: ${missing.map((m) => `<code>${esc(m)}</code>`).join(', ')}</li>`);
       rows.push(`<li>Project rules given to ${who}: ${rules.length ? rules.map(file).join(', ') : 'none'}</li>`);
       if (dropped.length) rows.push(`<li class="bad-t">Left out, over the context budget: ${dropped.map((d) => `<code>${esc(d)}</code>`).join(', ')}</li>`);
+    } else if (e.type === 'skills_opened') {
+      const offered = (p.offered as string[] | undefined) ?? [];
+      const opened = (p.opened as string[] | undefined) ?? [];
+      const unopened = offered.filter((s) => !opened.includes(s));
+      rows.push(`<li>Skills the agent opened: ${opened.length ? opened.map((s) => `<code>${esc(s)}</code>`).join(', ') : 'none'}${unopened.length ? `; not opened: ${unopened.map((s) => `<code>${esc(s)}</code>`).join(', ')}` : ''}</li>`);
     } else if (e.type === 'network_decisions') {
       const ds = (p.decisions as Array<{ host: string; port: number; decision: string; reason?: string }> | undefined) ?? [];
       const denied = ds.filter((d) => d.decision === 'deny');
@@ -520,7 +532,7 @@ function environment(events: StoredEvent[]): string {
       rows.push(`<li>Agent <code>${esc(p.agent)}</code> on <code>${esc(p.model)}</code>, limits ${l?.maxWallSeconds ? `${Math.round(l.maxWallSeconds / 60)} min` : '—'} and ${l?.maxSpendUsd !== undefined ? money(l.maxSpendUsd) : '—'}</li>`);
     }
   }
-  return rows.length ? `<details class="card"><summary><b>Where it ran</b> <span class="muted small">sandbox, network, rules, limits</span></summary><ul>${rows.join('')}</ul></details>` : '';
+  return rows.length ? `<details class="card"><summary><b>Where it ran</b> <span class="muted small">sandbox, network, rules, skills, limits</span></summary><ul>${rows.join('')}</ul></details>` : '';
 }
 
 export function runBody(v: RunView, rawLog: string): string {
