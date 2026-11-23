@@ -6,6 +6,8 @@ import type { CheckResult, CiResult, ReviewResult, VerifyVerdict } from '../doma
 
 export type RunLogEntry =
   | { type: 'run_context'; workItemId: string; taskId: string; station: string; attempt?: number }
+  /** A review of a change the factory didn't build (`reviewChange`): no work item or task. */
+  | { type: 'run_context'; station: 'review'; title: string; base: string }
   | { type: 'context_pack_built'; files: Array<{ path: string; bytes: number }>; dropped: string[]; budgetBytes: number }
   | { type: 'checkout_cloned'; path: string; repo: string }
   | { type: 'sandbox_created'; sandboxId: string; branch: string; baseRef: string; network: NetworkPolicy }

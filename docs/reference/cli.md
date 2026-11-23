@@ -13,6 +13,7 @@ factory cancel <id> [--reason <text>]
 factory budget [<user>]
 factory budget extend <id> [--usd <n>] [--no-run]
 factory budget extend --user <name> --usd <n> [--month]
+factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--json]
 factory validate [<dir>]
 factory log <run-id|work-item-id> [--full] [--json]
 factory help
@@ -39,6 +40,7 @@ alias factory="node /path/to/cradleworks/packages/cli/src/main.ts"
 | `0` | Success. For `watch`, it stopped when asked, or `--once` finished its pass. |
 | `1` | The task didn't reach the change gate: the build failed, or the task escalated (declined, out of rework attempts, or Verify couldn't decide). |
 | `2` | Bad usage or setup: unknown command, missing file, invalid `factory.yaml`, unknown adapter, no `origin` remote, or a problem found by `validate`. |
+| `3` | `review` only: the change couldn't be reviewed (the patch doesn't apply, the reviewer hit its budget, or its run failed). For `review`, `1` means rework or escalate. |
 
 ## `factory watch [<dir>...]`
 
@@ -136,6 +138,18 @@ work item of the project. It doesn't start any runs.
 ## `factory cancel <id>`
 
 Cancels the work item. Its pull requests stay open. `--reason` is stored.
+
+## `factory review <change.patch>`
+
+Has the reviewer judge a change the factory didn't build: the patch is applied to `--base` (the
+project's base branch by default) in a fresh sandbox, and the reviewer gets the same prompt, rules
+and verdict reading as Verify's, with `--title` and the text of `--task` as the task. No checks
+run (the reviewer may run what it needs), nothing is pushed, and no work item is charged; the run
+is capped at `budgets.per_task_usd`. Prints the verdict, risk and reasons, or with `--json` one
+JSON object with `review`, `cost` and `runId`. `factory log <runId>` replays it.
+
+Use it to review a branch by hand (`git diff main...feature > change.patch`), or to check the
+reviewer itself: the eval suite's reviewer drill hands it changes known to be wrong.
 
 ## `factory budget`
 

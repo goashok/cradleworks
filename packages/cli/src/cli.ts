@@ -55,6 +55,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await watch(rest, io);
       case 'console':
         return await consoleCommand(rest, io);
+      case 'review':
+        return await review(rest, io);
       case undefined:
       case 'help':
       case '--help':
@@ -101,6 +103,10 @@ const USAGE = `Usage:
                                     Raise a paused task's cap and carry on, or a requester's cap
   factory cancel <id> [--reason <text>]
                                     Cancel a work item
+  factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--json]
+                                    Have the reviewer judge a change the factory didn't build, as
+                                    Verify's reviewer would; nothing is pushed or merged. Exits 0
+                                    on pass, 1 on rework or escalate, 3 if it couldn't review
   factory validate [<dir>]          Check a project's .factory/ setup without running anything
   factory log <run-id|id> [--full] [--json]
   factory console [--port <n>]      A local web page of the work, what waits on a person, spend and
@@ -187,6 +193,39 @@ function relativeOrSelf(from: string, to: string): string {
 }
 
 // --- submit -------------------------------------------------------------------
+
+/** `factory review`: the reviewer on a patch, for reviewing by hand and for drills. */
+async function review(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { title: { type: 'string' }, task: { type: 'string' }, base: { type: 'string' }, json: { type: 'boolean' } },
+  });
+  const [patchPath] = positionals;
+  if (!patchPath || positionals.length > 1) throw new UsageError('review takes exactly one patch file: factory review <change.patch> --title <text>');
+  if (!values.title) throw new UsageError('review needs --title: what the change is meant to do');
+  const read = (path: string, what: string) => {
+    const file = resolve(io.cwd, path);
+    if (!existsSync(file)) throw new UsageError(`no ${what} at ${file}`);
+    return readFileSync(file, 'utf8');
+  };
+  const patch = read(patchPath, 'patch file');
+  const description = values.task ? read(values.task, 'task file') : '';
+
+  const ctx = await openProject(io);
+  try {
+    const outcome = await ctx.orchestrator.reviewChange(ctx.project, { title: values.title, description, patch, ...(values.base ? { base: values.base } : {}) });
+    if (values.json) io.stdout(`${JSON.stringify(outcome)}\n`);
+    else if (outcome.review) {
+      const r = outcome.review;
+      io.stdout(`${r.verdict}, ${r.risk} risk (${r.model}, $${outcome.cost.toFixed(2)}, run ${outcome.runId})\n${r.reasons.map((x) => `- ${x}`).join('\n')}\n`);
+    } else io.stderr(`factory: could not review: ${outcome.stop ?? outcome.error} (run ${outcome.runId})\n`);
+    if (!outcome.review) return 3;
+    return outcome.review.verdict === 'pass' ? 0 : 1;
+  } finally {
+    await ctx.close();
+  }
+}
 
 async function submit(args: string[], io: CliEnv): Promise<number> {
   const { values, positionals } = parseArgs({

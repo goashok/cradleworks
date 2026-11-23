@@ -132,6 +132,15 @@ export type BuildOutcome =
   /** The implementer disputed an acceptance test and the tester fixed it; the task verifies again. */
   | { outcome: 'tests_revised'; reason: string; runId: string };
 
+/** What `reviewChange` found: the reviewer's verdict, a budget stop, or why it couldn't review. */
+export interface ReviewChangeOutcome {
+  runId: string;
+  review?: ReviewResult;
+  stop?: string;
+  error?: string;
+  cost: number;
+}
+
 export type VerifyOutcome = { verdict: VerifyVerdict; reason: string; runId: string; evidence?: Evidence };
 
 /** Where a task stands after `runTask` returns: waiting on a person, done, or ended. */
@@ -534,45 +543,17 @@ export class Orchestrator {
       let review: ReviewResult | undefined;
       if (checksPassed) {
         step = 'review';
-        const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
-        const contextFiles = pack.files.map((f) => f.path);
-        const limits = { maxWallSeconds: this.#deps.reviewWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
-        // A reviewer whose verdict can't be read, or whose run fails, gets one more run: a lost
-        // verdict says nothing about the change. A second miss still escalates.
-        let done: Extract<AgentEvent, { type: 'done' }> | undefined;
-        for (let reviewAttempt = 1; reviewAttempt <= 2; reviewAttempt++) {
-          await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-          done = await this.#runAgent(log, {
-            runId: reviewAttempt === 1 ? runId : `${runId}-review2`,
-            profile,
-            sandbox,
-            rolePrompt: reviewerPrompt(project.config, contextFiles, base),
-            input: reviewAttempt === 1 ? reviewInput(task, checks, spec) : `${reviewInput(task, checks, spec)}\n\n${REVIEW_RETRY_NOTE}`,
-            contextFiles,
-            tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
-            limits,
-          }, { project, workItemId, taskId });
-          cost += done?.total.costUsd ?? 0;
-          const lost = done?.outcome === 'failed' && !(done.error && isBudgetStop(done.error));
-          const unreadable = done?.outcome === 'succeeded' && isUnreadableReview(parseReview(done.summary, profile.model));
-          if (reviewAttempt === 2 || !(lost || unreadable)) break;
-          await log.write({ type: 'review_retried', reason: unreadable ? 'the verdict could not be read' : `the run failed${done?.error ? `: ${done.error}` : ''}` });
-        }
-        const reviewStop = done?.error;
-        if (reviewStop && isBudgetStop(reviewStop)) {
-          await log.write({ type: 'step_failed', step: 'review', error: reviewStop });
+        const reviewed = await this.#runReviewer(project, log, runId, profile, sandbox, base, reviewInput(task, checks, spec), { project, workItemId, taskId });
+        cost += reviewed.cost;
+        if (reviewed.stop) {
           const latest = await this.#mustLoad(workItemId);
           await this.#emit(workItemId, [
-            { type: 'task_budget_exceeded', at: this.#clock(), taskId, spentUsd: findTask(latest, taskId).spentUsd ?? 0, reason: reviewStop },
+            { type: 'task_budget_exceeded', at: this.#clock(), taskId, spentUsd: findTask(latest, taskId).spentUsd ?? 0, reason: reviewed.stop },
             { type: 'run_ended', at: this.#clock(), runId, outcome: 'limit_reached' },
           ]);
-          return { verdict: 'escalate', reason: reviewStop, runId };
+          return { verdict: 'escalate', reason: reviewed.stop, runId };
         }
-        review =
-          done?.outcome === 'succeeded'
-            ? parseReview(done.summary, profile.model)
-            : { verdict: 'escalate', risk: 'high', reasons: [`The reviewer run ended ${done?.outcome ?? 'without a result'}${done?.error ? `: ${done.error}` : ''}.`], model: profile.model };
-        await log.write({ type: 'review_decided', ...review });
+        review = reviewed.review;
       }
 
       step = 'ci';
@@ -1072,6 +1053,101 @@ export class Orchestrator {
   }
 
   /** A read-only agent in a fresh sandbox on the base branch: spec, plan and check agents. */
+  /**
+   * The reviewer agent on the change checked out in `sandbox`, against `base`. A reviewer whose
+   * verdict can't be read, or whose run fails, gets one more run: a lost verdict says nothing
+   * about the change, and a second miss escalates. Returns `stop` instead of a review when the
+   * run hit a budget cap.
+   */
+  async #runReviewer(
+    project: Project,
+    log: RunLog,
+    runId: string,
+    profile: AgentProfile,
+    sandbox: SandboxHandle,
+    base: string,
+    input: string,
+    charge: { project: Project; workItemId?: string; taskId?: string },
+  ): Promise<{ review: ReviewResult; stop?: undefined; cost: number } | { review?: undefined; stop: string; cost: number }> {
+    const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
+    const contextFiles = pack.files.map((f) => f.path);
+    const limits = { maxWallSeconds: this.#deps.reviewWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
+    let done: Extract<AgentEvent, { type: 'done' }> | undefined;
+    let cost = 0;
+    for (let reviewAttempt = 1; reviewAttempt <= 2; reviewAttempt++) {
+      await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
+      done = await this.#runAgent(log, {
+        runId: reviewAttempt === 1 ? runId : `${runId}-review2`,
+        profile,
+        sandbox,
+        rolePrompt: reviewerPrompt(project.config, contextFiles, base),
+        input: reviewAttempt === 1 ? input : `${input}\n\n${REVIEW_RETRY_NOTE}`,
+        contextFiles,
+        tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
+        limits,
+      }, charge);
+      cost += done?.total.costUsd ?? 0;
+      const lost = done?.outcome === 'failed' && !(done.error && isBudgetStop(done.error));
+      const unreadable = done?.outcome === 'succeeded' && isUnreadableReview(parseReview(done.summary, profile.model));
+      if (reviewAttempt === 2 || !(lost || unreadable)) break;
+      await log.write({ type: 'review_retried', reason: unreadable ? 'the verdict could not be read' : `the run failed${done?.error ? `: ${done.error}` : ''}` });
+    }
+    const stop = done?.error;
+    if (stop && isBudgetStop(stop)) {
+      await log.write({ type: 'step_failed', step: 'review', error: stop });
+      return { stop, cost };
+    }
+    const review: ReviewResult =
+      done?.outcome === 'succeeded'
+        ? parseReview(done.summary, profile.model)
+        : { verdict: 'escalate', risk: 'high', reasons: [`The reviewer run ended ${done?.outcome ?? 'without a result'}${done?.error ? `: ${done.error}` : ''}.`], model: profile.model };
+    await log.write({ type: 'review_decided', ...review });
+    return { review, cost };
+  }
+
+  /**
+   * Reviews a change the factory did not build: `patch` applied to `base` in a fresh sandbox
+   * and judged by the same reviewer, prompt and verdict reading as Verify's. No checks run,
+   * nothing is pushed, and no work item is charged; the run is capped at the project's
+   * per-task budget. For reviewing a change by hand, and for drills that hand the reviewer a
+   * change known to be wrong.
+   */
+  async reviewChange(project: Project, input: { title: string; description: string; patch: string; base?: string }): Promise<ReviewChangeOutcome> {
+    const base = input.base ?? project.baseBranch ?? 'main';
+    const runId = this.#id('run');
+    const log = new RunLog(this.#deps.store, runId, this.#clock);
+    const profile: AgentProfile = { role: 'reviewer', ...resolveAgent(project.config, 'reviewer') };
+    await log.write({ type: 'run_context', station: 'review', title: input.title, base });
+    const checkoutDir = join(this.#deps.workRoot, 'review', shortId(runId));
+    let sandbox: SandboxHandle | undefined;
+    let step = 'clone';
+    try {
+      mkdirSync(checkoutDir, { recursive: true });
+      const checkout = await this.#deps.sourceControl.clone(project.repo, join(checkoutDir, 'source'), { ref: base });
+      await log.write({ type: 'checkout_cloned', path: checkout.path, repo: project.repo.id });
+      step = 'sandbox';
+      const network = withHosts(project.config.network, this.#deps.runtime.requiredHosts(profile));
+      const branch = `factory/${shortId(runId)}-review`;
+      sandbox = await this.#deps.sandbox.create({ taskId: `${shortId(runId)}-review`, source: checkout, baseRef: `origin/${base}`, branch, image: project.config.stack.image, network });
+      await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch, baseRef: `origin/${base}`, network });
+      step = 'apply';
+      const applied = await this.#deps.sandbox.exec(sandbox, ['git', 'apply', '--index', '--whitespace=nowarn', '-'], { stdin: input.patch });
+      if (applied.exitCode !== 0) throw new Error(`the patch does not apply to ${base}: ${(applied.stderr || applied.stdout).trim()}`);
+      const sha = (await this.#deps.sourceControl.commit({ repo: project.repo, path: sandbox.workspacePath }, `${input.title}\n\nChange under review (run ${runId}).`)).sha;
+      await log.write({ type: 'changes_committed', sha });
+      step = 'review';
+      const reviewed = await this.#runReviewer(project, log, runId, profile, sandbox, base, reviewInput({ title: input.title, description: input.description }, []), { project });
+      return reviewed.review ? { runId, review: reviewed.review, cost: reviewed.cost } : { runId, stop: reviewed.stop, cost: reviewed.cost };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await log.write({ type: 'step_failed', step, error: message });
+      return { runId, error: `${step}: ${message}`, cost: 0 };
+    } finally {
+      if (sandbox) await this.#teardown(log, sandbox);
+      rmSync(checkoutDir, { recursive: true, force: true });
+    }
+  }
+
   async #inspect(
     project: Project,
     wi: WorkItem,
@@ -1430,11 +1506,12 @@ export class Orchestrator {
   async #runAgent(
     log: RunLog,
     request: Parameters<AgentRuntime['start']>[0],
-    charge: { project: Project; workItemId: string; taskId?: string },
+    charge: { project: Project; workItemId?: string; taskId?: string },
   ): Promise<Extract<AgentEvent, { type: 'done' }> | undefined> {
-    const wi = await this.#mustLoad(charge.workItemId);
-    const task = charge.taskId ? wi.tasks.find((t) => t.id === charge.taskId) : undefined;
-    const budget = checkBudget(charge.project.config, task, await userSpend(this.#deps.store, wi.requester, this.#clock()));
+    // A run for no work item (a review by hand) is held to its own limit and charged to no one.
+    const wi = charge.workItemId ? await this.#mustLoad(charge.workItemId) : undefined;
+    const task = wi && charge.taskId ? wi.tasks.find((t) => t.id === charge.taskId) : undefined;
+    const budget = wi ? checkBudget(charge.project.config, task, await userSpend(this.#deps.store, wi.requester, this.#clock())) : { stop: undefined, allowedUsd: Infinity };
     if (budget.stop) {
       await log.write({ type: 'budget_stopped', reason: budget.stop });
       return { type: 'done', runId: request.runId, seq: 0, at: this.#clock(), outcome: 'limit_reached', error: budget.stop, total: { ...ZERO_USAGE } };
@@ -1451,12 +1528,12 @@ export class Orchestrator {
       if (event.type === 'denied') await log.write({ type: 'command_denied', tool: event.tool, detail: event.detail });
       if (event.type === 'done') done = event;
     }
-    await this.#emit(charge.workItemId, [
+    if (wi) await this.#emit(wi.id, [
       {
         type: 'agent_cost_recorded',
         at: this.#clock(),
         runId: request.runId,
-        subjectId: charge.taskId ?? charge.workItemId,
+        subjectId: charge.taskId ?? wi.id,
         role: request.profile.role,
         requester: wi.requester,
         costUsd: done?.total.costUsd ?? 0,
@@ -1464,9 +1541,9 @@ export class Orchestrator {
     ]);
     // A run stopped at the limit the caps set is a budget stop, not the task's fault.
     if (done && done.outcome === 'limit_reached' && Number.isFinite(cap) && done.total.costUsd >= cap * 0.9) {
-      const latest = await this.#mustLoad(charge.workItemId);
-      const after = checkBudget(charge.project.config, latest.tasks.find((t) => t.id === charge.taskId), await userSpend(this.#deps.store, wi.requester, this.#clock()));
-      done = { ...done, error: after.stop ?? `budget: the run used the $${cap.toFixed(2)} left under the caps` };
+      const latest = wi && (await this.#mustLoad(wi.id));
+      const after = latest && checkBudget(charge.project.config, latest.tasks.find((t) => t.id === charge.taskId), await userSpend(this.#deps.store, latest.requester, this.#clock()));
+      done = { ...done, error: after?.stop ?? `budget: the run used the $${cap.toFixed(2)} left under the caps` };
     }
     return done;
   }
@@ -1567,10 +1644,11 @@ function shortId(id: string): string {
   return rest ? `${kind}-${rest.slice(0, 8)}` : id;
 }
 
-function reviewInput(task: Task, checks: Evidence['checks'], spec?: SpecDocument): string {
+function reviewInput(task: Pick<Task, 'title' | 'description'>, checks: Evidence['checks'], spec?: SpecDocument): string {
   const lines = [`# Task: ${task.title}`, '', task.description?.trim() || '_(no description)_'];
   if (spec) lines.push('', `## The spec this task is part of: ${spec.title}`, '', specBody(spec), '', 'Judge this task against the criteria it covers; other tasks cover the rest.');
   lines.push('', '## Project checks on this branch');
+  if (!checks.length) lines.push('- None were run for this review; run what you need.');
   for (const c of checks) lines.push(`- \`${c.name}\` (\`${c.command}\`): ${c.outcome}${c.flaky ? ' (failed once, passed on a second run)' : ''}`);
   return lines.join('\n');
 }

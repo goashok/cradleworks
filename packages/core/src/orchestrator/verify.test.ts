@@ -1,7 +1,7 @@
 // End-to-end tests of Verify, the rework loop and the change gate on the fakes: real git,
 // real files, commands run as processes, scripted implementer and reviewer.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -351,6 +351,41 @@ describe('declining and retrying', () => {
     expect(second.state).toBe('ready');
     expect(second.pr).toBeDefined();
     expect(requests.filter((r) => r.profile.role === 'implementer')[1]!.input).toContain('Add fixed.txt anyway.');
+  });
+});
+
+describe('reviewing a change by hand', () => {
+  const PATCH = ['diff --git a/fixed.txt b/fixed.txt', 'new file mode 100644', 'index 0000000..1111111', '--- /dev/null', '+++ b/fixed.txt', '@@ -0,0 +1 @@', '+fixed', ''].join('\n');
+
+  it('applies the patch on the base and asks the same reviewer, charging no work item', async () => {
+    let saw = false;
+    const o = orchestrator({
+      implement: () => [],
+      review: (req) => {
+        saw = existsSync(join(req.sandbox.workspacePath, 'fixed.txt'));
+        return [say('Missing a test.\n{"verdict":"rework","risk":"medium","reasons":["fixed.txt has no test"]}')];
+      },
+    });
+    const out = await o.reviewChange(project, { title: 'Add fixed.txt', description: 'Create `fixed.txt`.', patch: PATCH });
+    expect(out).toMatchObject({ review: { verdict: 'rework', reasons: ['fixed.txt has no test'], model: 'review-model' } });
+    expect(saw).toBe(true);
+    const [req] = requests;
+    expect(req!.rolePrompt).toContain('git diff origin/main...HEAD');
+    expect(req!.input).toContain('# Task: Add fixed.txt');
+    expect(req!.input).toContain('None were run for this review');
+    expect(await store.query({ types: ['agent_cost_recorded'] })).toHaveLength(0);
+    expect((await git(['--git-dir', bare, 'branch', '--list'])).stdout).not.toContain('review'); // nothing pushed
+  });
+
+  it('retries a lost verdict as Verify does, and says when the patch does not apply', async () => {
+    const o = orchestrator({ implement: () => [], review: (_r, n) => [say(n === 1 ? 'Hmm.' : PASS)] });
+    expect(await o.reviewChange(project, { title: 'Add fixed.txt', description: '', patch: PATCH })).toMatchObject({ review: { verdict: 'pass' } });
+    expect(requests.filter((r) => r.profile.role === 'reviewer')).toHaveLength(2);
+
+    const broken = PATCH.replace('new file mode 100644', 'deleted file mode 100644').replace('--- /dev/null', '--- a/fixed.txt').replace('+++ b/fixed.txt', '+++ /dev/null');
+    const out = await o.reviewChange(project, { title: 'Remove fixed.txt', description: '', patch: broken });
+    expect(out.review).toBeUndefined();
+    expect(out.error).toMatch(/^apply: the patch does not apply to main/);
   });
 });
 
