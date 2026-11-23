@@ -601,7 +601,10 @@ function describe(wi: WorkItem): string {
     if (next) lines.push(`    next    ${next}`);
   }
   lines.push('', 'Runs');
-  for (const r of wi.runs) lines.push(`  ${r.id}  ${r.station}  ${r.outcome ?? 'running'}  ${r.startedAt}`);
+  for (const r of wi.runs) {
+    const agent = r.agentProfile ? `  ${r.agentProfile.agent}/${r.agentProfile.model}` : '';
+    lines.push(`  ${r.id}  ${r.station}  ${r.outcome ?? 'running'}  ${r.startedAt}${agent}`);
+  }
   lines.push('', 'Gates');
   for (const g of wi.gateDecisions) lines.push(`  ${g.gate}  ${g.verdict} (${g.mode}) by ${g.decidedBy}`);
   return `${lines.join('\n')}\n`;

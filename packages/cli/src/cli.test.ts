@@ -314,6 +314,7 @@ describe('factory watch', () => {
     const detail = await factory(['status', wiId], checkout, reg);
     expect(detail.stdout).toContain(`issue      ${issue.url}`);
     expect(detail.stdout).toMatch(/Spec\n {2}spec_\S+ version 1, not approved yet/);
+    expect(detail.stdout).toMatch(/ specify {2}succeeded {2}\S+ {2}scripted\/none\n/);
 
     expect(await factory(['approve', wiId], checkout, reg)).toMatchObject({ code: 0, stdout: expect.stringContaining('Approved the spec v1 of') });
     expect(tracker.factoryComments(issue).at(-1)).toContain('**Spec approved** by');
