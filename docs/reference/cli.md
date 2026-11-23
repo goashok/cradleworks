@@ -202,8 +202,15 @@ A local web page over the factory's state, at `http://127.0.0.1:4747/` by defaul
   10 seconds.
 - **Waiting on a person**: work items at the spec gate, tasks waiting at the change gate, and tasks
   that escalated, failed or hit their budget.
-- A work item's page: its tasks with their pull requests, its runs, and the same details as
-  `factory status <id>`. A run's page is its `factory log --full`.
+- A work item's page tells its story: a sentence on where it stands and whether it needs you,
+  its progress from request to merged, the spec (open for reading while it waits for approval),
+  a card per task with its pull request and its latest check (project checks, CI, the reviewer's
+  verdict and reasons), what happened in order, and every run with what it cost. The text of
+  `factory status <id>` is folded at the bottom.
+- A run's page leads with its result in the terms of its step (the checks and the reviewer's
+  verdict for Verify, the decision for a spec or plan check, the commit and pull request for
+  Build), then each agent's work as a conversation, its commands folded with their output. Where
+  it ran (sandbox, network, rules, limits) and the text of `factory log --full` are folded below.
 
 The buttons are the CLI's own commands, run in the directory the console started in: approve, send
 back (`reject --no-run`), retry (`--no-run`), extend a budget (`--no-run`) and cancel. A running
