@@ -124,6 +124,31 @@ const issue = (body = 'Please let me export my orders.') => tracker.addItem({ pr
 const roles = () => requests.map((r) => (r.profile.role === 'reviewer' && /^# (Spec|Plan) check/.test(r.input) ? `${r.input.startsWith('# Spec') ? 'spec' : 'plan'}_check` : r.profile.role));
 
 describe('issue flow', () => {
+  it("doesn't hold the factory's own spec for a person after a rework of the task that carries it", async () => {
+    const rework = json({ verdict: 'rework', risk: 'low', reasons: ['Add a line to the export.'] });
+    let sentBack = false;
+    const o = orchestrator({
+      reviewer: (req) => {
+        if (sentBack || !req.input.includes('Write export')) return [PASS];
+        sentBack = true;
+        return [rework];
+      },
+      implementer: (req, n) => {
+        const title = /^# (.*?)(?: \(rework \d+\))?$/m.exec(req.input)?.[1] ?? '';
+        return [{ kind: 'message', text: `Did ${title}.` }, write(FILE[title] ?? 'other.txt', `${FILE[title]} v${n}\n`)];
+      },
+    });
+    const ref = issue();
+    const { workItemId } = await o.receiveItem(project, ref);
+    await o.runWorkItem(project, workItemId);
+    tracker.addComment(ref, 'sam', '/approve');
+    expect((await o.runWorkItem(project, workItemId)).state).toBe('merged');
+    const first = (await o.getWorkItem(workItemId))!.tasks[0]!;
+    expect(first.reworkLoops).toBe(1);
+    expect(first.protectedPaths ?? []).toEqual([]);
+    expect(await file(bare, 'main', '.factory/specs/issue-1-export-orders.md')).toContain('Approved by sam');
+  });
+
   it('goes from an issue to merged pull requests, waiting for the spec approval', async () => {
     const o = orchestrator();
     const ref = issue();
