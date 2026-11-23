@@ -557,7 +557,7 @@ export function runBody(v: RunView, rawLog: string): string {
     .map((s, i) => `<section class="card"><h2>${esc(s.name)}</h2>${segments.length > 1 ? `<p class="muted small">Agent ${i + 1} of ${segments.length} in this run.</p>` : ''}${conversation(s.events) || '<p class="muted">It recorded nothing.</p>'}</section>`)
     .join('\n');
 
-  const crumbs = v.wi ? `<p class="crumbs"><a href="/wi/${esc(v.wi.id)}">${esc(v.wi.title)}</a>${task ? ` › ${esc(task.title)}` : ''}</p>` : '';
+  const crumbs = v.wi ? `<p class="crumbs"><a href="/runs">Runs</a> › <a href="/wi/${esc(v.wi.id)}">${esc(v.wi.title)}</a>${task ? ` › ${esc(task.title)}` : ''}</p>` : '';
   return `${crumbs}<div class="row"><h1>${esc(name)}</h1>${outcome !== undefined && outcome !== 'succeeded' ? outcomeChip(outcome) : verdict ? verdictChip(verdict) : decided ? (decided === 'approved' ? chip('Approved', 'ok') : chip('Sent back', 'wait')) : outcomeChip(outcome)}</div>
 <p class="muted">${esc(facts.join(' · '))}${v.run?.agentProfile ? ` · ${esc(v.run.agentProfile.agent ?? '')} ${esc(v.run.agentProfile.model ?? '')}` : ''}</p>
 ${resultSection(v.events, v.wi?.id ?? ctx?.workItemId)}

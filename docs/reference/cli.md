@@ -212,9 +212,16 @@ See [Follow and replay runs](../guides/runs-and-logs.md) for how to read the out
 
 A local web page over the factory's state, at `http://127.0.0.1:4747/` by default:
 
-- **Work**: every work item, its state, tasks merged out of planned, and spend. Refreshes every
-  10 seconds.
-- **Waiting on a person**: work items at the spec gate, tasks waiting at the change gate, and tasks
+- **Dashboard**, the page it opens on: counts of what needs you, what is in progress, what merged
+  this week, runs and spend this week, each linking to the list it counts; runs per day for the
+  last two weeks; what waits on you, grouped by what it waits on (a spec or change to approve, a
+  failed or escalated task, a budget); work in progress, marked **stalled** when nothing has run
+  for over an hour (usually `factory watch` stopped or paused on a usage limit); the latest runs;
+  and recently finished work. Pages refresh every 10 seconds.
+- **Work**: every work item, where it is, tasks merged out of planned, and spend, filtered to
+  needs you, in progress or finished.
+- **Runs**: every agent run across all work, newest first, filtered to running or did not succeed.
+- **Needs you**: work items at the spec gate, tasks waiting at the change gate, and tasks
   that escalated, failed or hit their budget.
 - A work item's page tells its story: a sentence on where it stands and whether it needs you,
   its progress from request to merged, the spec (open for reading while it waits for approval),

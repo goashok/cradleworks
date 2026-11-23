@@ -69,6 +69,10 @@ describe('factory console', () => {
     expect(list).toContain('Add a &lt;b&gt;changelog&lt;/b&gt;');
     expect(list).not.toContain('<b>changelog</b>');
     expect(await (await fetch(`${url}waiting`)).text()).toContain(`/wi/${wiId}`);
+    expect(list).toContain('<h1>Dashboard</h1>');
+    expect(await (await fetch(`${url}work`)).text()).toContain(`/wi/${wiId}`);
+    expect(await (await fetch(`${url}work?show=finished`)).text()).not.toContain(`/wi/${wiId}`);
+    expect(await (await fetch(`${url}runs`)).text()).toContain(`/run/${runId}`);
 
     const detail = await (await fetch(`${url}wi/${wiId}`)).text();
     expect(detail).toContain('Approve change');

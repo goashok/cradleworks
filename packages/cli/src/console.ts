@@ -13,6 +13,7 @@ import type { SpecDocument, StoredEvent } from '@cradleworks/interfaces';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { chip, costByRun, esc, headline, money, runBody, runsTable, specSection, steps, story, storySection, taskCard } from './console-view.ts';
 import { formatLog } from './log.ts';
+import { dashboardBody, FINISHED, runsListBody, workListBody, type RunFilter, type WorkFilter } from './console-dashboard.ts';
 
 export { esc } from './console-view.ts';
 
@@ -23,10 +24,6 @@ export interface ConsoleOptions {
   runCommand: (argv: string[]) => Promise<{ code: number; output: string }>;
   token?: string;
 }
-
-const WAITING = new Set(['awaiting_spec_approval', 'awaiting_change_approval', 'blocked']);
-const TASK_WAITING = new Set(['escalated', 'budget_exceeded', 'failed']);
-
 
 function page(title: string, body: string, refresh: boolean): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -76,29 +73,20 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 button.danger{color:var(--bad);border-color:var(--bad)}button.danger:hover{background:var(--badbg)}
 .actions.panel{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}.actions.panel .or{color:var(--muted);font-size:13px}.actions.panel form{margin:2px 0}.decide{display:flex;flex-wrap:wrap;gap:4px 8px}
 .notice{padding:10px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);margin-bottom:16px;white-space:pre-wrap}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0 4px}
+.tile{display:flex;flex-direction:column;gap:2px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:var(--fg);text-decoration:none}.tile:hover{border-color:var(--accent)}
+.tile .label{margin:0}.tile .value{font-size:28px;font-weight:650;line-height:1.15;font-variant-numeric:tabular-nums}.tile.wait{border-left:4px solid var(--warn)}.tile.wait .value{color:var(--warn)}
+.tile.busy .value{color:var(--busy)}.tile.ok .value{color:var(--ok)}.tile.bad .value{color:var(--bad)}
+.clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.kinds{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}.row.between{justify-content:space-between}.more{font-size:13.5px;text-decoration:none}a.quiet{color:var(--muted)}
+
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0 14px;border-bottom:1px solid var(--line)}.tabs a{padding:6px 12px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs a.on{color:var(--fg);border-bottom-color:var(--accent);font-weight:600}.tabs .n{font-size:12px;background:var(--soft);border-radius:999px;padding:0 7px;margin-left:2px}
+.bars{display:flex;align-items:flex-end;gap:4px;height:120px;margin-top:6px}.bar{flex:1 1 0;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
+.bar .stack{flex:1;width:100%;display:flex;flex-direction:column;justify-content:flex-end;background:var(--soft);border-radius:4px;overflow:hidden}.bar .stack span{display:block;width:100%}
+.bar .ok,.key.ok{background:var(--ok)}.bar .bad,.key.bad{background:var(--bad)}.bar .d{font-size:11px;color:var(--muted);margin-top:3px}
+.key{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 8px;vertical-align:-1px}.legend{margin-top:6px}.row.between{margin:28px 0 10px}.cols.even{grid-template-columns:1fr 1fr}.cols>*{min-width:0}@media (max-width:640px){.cols.even{grid-template-columns:1fr}.tile .value{font-size:24px}}
 .actions{margin:8px 0}.scroll{overflow-x:auto}@media (max-width:640px){.hide-sm{display:none}.steps li{font-size:11px;padding:5px 2px}h1{font-size:19px}.card{padding:12px}details.tool{margin-left:0}}
-</style></head><body><header><b>Cradleworks</b><a href="/">Work</a><a href="/waiting">Waiting on a person</a></header><main>${body}</main></body></html>`;
-}
-
-const stateChip = (state: string, waiting: boolean) => `<span class="state${waiting ? ' wait' : state === 'merged' ? ' ok' : ''}">${esc(state.replace(/_/g, ' '))}</span>`;
-
-const FINISHED = new Set(['merged', 'failed', 'cancelled']);
-
-function needsPerson(wi: WorkItem): boolean {
-  if (FINISHED.has(wi.state)) return false;
-  return WAITING.has(wi.state) || wi.tasks.some((t) => TASK_WAITING.has(t.state) || (t.state === 'ready' && !t.changeApproved));
-}
-
-export function listPage(items: WorkItem[], filter: 'all' | 'waiting'): string {
-  const shown = filter === 'waiting' ? items.filter(needsPerson) : items;
-  const rows = shown.map((wi) => {
-    const done = wi.tasks.filter((t) => t.state === 'merged').length;
-    return `<tr><td><a href="/wi/${esc(wi.id)}">${esc(wi.title)}</a><div class="muted hide-sm">${esc(wi.projectId)} · ${esc(wi.id)}</div></td>
-<td>${stateChip(wi.state, needsPerson(wi))}</td><td class="num">${done}/${wi.tasks.length}</td><td class="num">${money(wi.spentUsd)}</td><td class="muted hide-sm">${esc(wi.requester ?? '')}</td></tr>`;
-  });
-  const title = filter === 'waiting' ? 'Waiting on a person' : 'Work';
-  const empty = filter === 'waiting' ? 'Nothing is waiting on a person.' : 'No work items yet.';
-  return page(title, `<h1>${title}</h1>${rows.length ? `<div class="scroll"><table><tr><th>Work item</th><th>State</th><th>Tasks</th><th>Spent</th><th class="hide-sm">Requester</th></tr>${rows.join('')}</table></div>` : `<p class="muted">${empty}</p>`}`, true);
+</style></head><body><header><b>Cradleworks</b><a href="/">Dashboard</a><a href="/work">Work</a><a href="/runs">Runs</a><a href="/waiting">Needs you</a></header><main>${body}</main></body></html>`;
 }
 
 function form(token: string, action: string, id: string, label: string, extra = '', kind: 'primary' | 'danger' | '' = ''): string {
@@ -142,7 +130,7 @@ export function workItemPage(wi: WorkItem, description: string, token: string, n
   const planned = wi.proposedTasks.length && !wi.tasks.length
     ? `<h2>Proposed plan</h2>${wi.proposedTasks.map((t) => `<section class="card"><h3>${esc(t.title)}</h3><p class="muted small">size ${esc(t.size)}</p>${t.description ? `<details><summary>What the task asks</summary><div class="text">${esc(t.description)}</div></details>` : ''}</section>`).join('')}`
     : '';
-  const body = `${notice ? `<div class="notice">${esc(notice)}</div>` : ''}<p class="crumbs"><a href="/">Work</a></p><h1>${esc(wi.title)}</h1>
+  const body = `${notice ? `<div class="notice">${esc(notice)}</div>` : ''}<p class="crumbs"><a href="/">Dashboard</a> · <a href="/work">Work</a></p><h1>${esc(wi.title)}</h1>
 <p class="muted small">${esc(wi.projectId)} · asked by ${esc(wi.requester)} · started ${esc(new Date(wi.createdAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))} · spent ${money(wi.spentUsd)}${source}</p>
 ${steps(wi)}
 <div class="headline ${h.tone}"><div>${h.needsYou ? `${chip('Needs you', 'wait')} ` : ''}${esc(h.text)}</div>${workItemActions(wi, token)}</div>
@@ -220,7 +208,18 @@ export function startConsole(options: ConsoleOptions, describeWorkItem: (wi: Wor
   const server = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${options.port}`);
-      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/waiting')) return send(res, 200, listPage(await items(), url.pathname === '/' ? 'all' : 'waiting'));
+      const costs = async () => costByRun(await store.query({ types: ['agent_cost_recorded'] }));
+      if (req.method === 'GET' && url.pathname === '/') return send(res, 200, page('Dashboard', dashboardBody(await items(), await costs()), true));
+      if (req.method === 'GET' && (url.pathname === '/work' || url.pathname === '/waiting')) {
+        const show = url.pathname === '/waiting' ? 'waiting' : url.searchParams.get('show');
+        const filter: WorkFilter = show === 'waiting' || show === 'active' || show === 'finished' ? show : 'all';
+        return send(res, 200, page(filter === 'waiting' ? 'Needs you' : 'Work', workListBody(await items(), filter), true));
+      }
+      if (req.method === 'GET' && url.pathname === '/runs') {
+        const show = url.searchParams.get('show');
+        const filter: RunFilter = show === 'running' || show === 'failed' ? show : 'all';
+        return send(res, 200, page('Runs', runsListBody(await items(), await costs(), filter), true));
+      }
       const wiMatch = /^\/wi\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
       if (req.method === 'GET' && wiMatch) {
         const wi = await repo.load(wiMatch[1]!);
