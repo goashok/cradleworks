@@ -171,8 +171,17 @@ full suite, on a pinned checkout of a commit, and judges it against the history.
 twice now; a full run is flagged when it scores below the lowest of the last three. The exit check
 made two changes on purpose. A docs-only change was skipped, as it should be. A reviewer told to
 pass everything was **not** flagged, because the real reviewer misses the same broken changes, so
-there was nothing for the alarm to see. That is a finding about the reviewer, not the alarm, and
-the check is to be repeated once the reviewer catches those changes.
+there was nothing for the alarm to see. That is a finding about the reviewer, not the alarm.
+
+The rule then learned hygiene: a run is also flagged when more of its merged changes are untidy
+than in any of the last three. Re-judged, it flags the first weakened-reviewer run (one untidy
+change against none). A fresh full run of the weakened reviewer on 2026-11-23 was **not** flagged:
+it scored 26 of 30, the best yet, and all 29 merged changes were clean. The reviewer passed all 44
+changes it saw, where the real one sent back 4 of 47 in the tester-fix run, but this time the
+implementer made no mess for it to miss. So the alarm catches a weakened reviewer only when the
+implementer happens to need one; what it measures is outcomes, and on these 30 tasks a missing
+reviewer seldom changes them. The only signal that always moved was the reviewer's own send-back
+count.
 
 ## Running it
 
