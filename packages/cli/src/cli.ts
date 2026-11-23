@@ -403,6 +403,11 @@ function evidenceLines(e: Evidence): string[] {
   const review = e.review ? `${e.review.verdict} (${e.review.risk} risk)` : 'not run';
   const lines = [`checks: ${checks || 'none'}   CI: ${ci}   reviewer: ${review}`];
   for (const r of e.review?.reasons ?? []) lines.push(`  - ${r}`);
+  for (const c of e.agentChecks ?? []) {
+    const kind = c.blocking ? 'blocking' : 'advisory';
+    lines.push(`agent check ${c.name} (${kind}): ${c.couldNotCheck ? `couldn't check: ${c.couldNotCheck}` : `${c.verdict} (${c.risk} risk)`}`);
+    if (!c.couldNotCheck && c.verdict !== 'pass') for (const r of c.reasons) lines.push(`  - ${r}`);
+  }
   return lines;
 }
 
