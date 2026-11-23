@@ -51,7 +51,13 @@ export type WorkItemEvent =
   /** `protectedPaths`: files the change touches that only a person may approve and merge. */
   | (Base & { type: 'task_built'; taskId: string; protectedPaths?: string[] })
   | (Base & { type: 'task_evidence_recorded'; taskId: string; evidence: Evidence })
-  | (Base & { type: 'task_verified'; taskId: string; verdict: 'pass' | 'rework' | 'escalate'; reason: string })
+  /** `protectedPaths`: protected files Verify found on the branch, when it scanned the whole of it. */
+  | (Base & { type: 'task_verified'; taskId: string; verdict: 'pass' | 'rework' | 'escalate'; reason: string; protectedPaths?: string[] })
+  /**
+   * A person asked for the branch as it stands to be verified again, without building: after
+   * pushing to it by hand, or to see how a check judges it. From ready, rework or escalated.
+   */
+  | (Base & { type: 'task_reverify_requested'; taskId: string; requestedBy: string; reason: string })
   /** The implementer finished without changing anything and said why; a human decides. */
   | (Base & { type: 'task_declined'; taskId: string; reason: string })
   | (Base & { type: 'task_rework_started'; taskId: string })
@@ -94,6 +100,7 @@ export const WORK_ITEM_EVENT_TYPES: ReadonlySet<WorkItemEventType> = new Set<Wor
   'task_built',
   'task_evidence_recorded',
   'task_verified',
+  'task_reverify_requested',
   'task_declined',
   'task_rework_started',
   'task_acceptance_tests_written',

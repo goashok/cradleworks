@@ -8,6 +8,7 @@ factory approve <id> [--merge] [--reason <text>]
 factory reject <id> --reason <text> [--no-run]
 factory retry <id> [--loops <n>] [--note <text>] [--no-run]
 factory resume <id>
+factory verify <task-id> [--note <text>]
 factory sync [<id>]
 factory cancel <id> [--reason <text>]
 factory budget [<user>]
@@ -140,6 +141,20 @@ work item of the project. It doesn't start any runs.
 ## `factory cancel <id>`
 
 Cancels the work item. Its pull requests stay open. `--reason` is stored.
+
+## `factory verify <task-id>`
+
+Verifies a task's branch as it stands, without building: for commits a person pushed to the
+branch, or to see how the checks judge it now. The task must have a pull request and be ready,
+sent back or escalated. Build's hard rules run on the whole branch first, since hand-pushed
+commits never went through them: a secret escalates the task without reviewing, and protected
+paths are recorded so the change needs a person at the gate. Then Verify runs as usual (checks,
+acceptance tests, CI, the reviewer and agent checks) and its verdict moves the task, counting a
+send-back toward `max_rework_loops`. A previous approval at the change gate no longer counts.
+Nothing builds afterwards: `factory resume` reworks a task that was sent back.
+
+`--note` is recorded as the reason. Exit status: 0 passed, 1 sent back or escalated, 2 the task
+can't be verified now.
 
 ## `factory drill`
 

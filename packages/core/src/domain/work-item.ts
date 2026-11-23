@@ -157,6 +157,7 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       const task = findTask(wi, event.taskId, fail);
       expectTaskState(task, ['verifying'], fail);
       task.lastReason = event.reason;
+      if (event.protectedPaths?.length) task.protectedPaths = [...new Set([...(task.protectedPaths ?? []), ...event.protectedPaths])].sort();
       if (event.verdict === 'pass') {
         if (!task.pr) fail(`task ${task.id} has no pull request to approve`);
         task.state = 'ready';
@@ -166,6 +167,17 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
         task.reworkLoops += 1;
         task.state = 'rework';
       }
+      break;
+    }
+
+    case 'task_reverify_requested': {
+      const task = findTask(wi, event.taskId, fail);
+      expectTaskState(task, ['ready', 'rework', 'escalated'], fail);
+      if (!task.pr) fail(`task ${task.id} has no pull request to verify`);
+      task.state = 'verifying';
+      // Whatever is verified now is not what a person approved before.
+      task.changeApproved = false;
+      task.lastReason = event.reason;
       break;
     }
 

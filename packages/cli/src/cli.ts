@@ -49,6 +49,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await budget(rest, io);
       case 'resume':
         return await resume(rest, io);
+      case 'verify':
+        return await verify(rest, io);
       case 'cancel':
         return await cancel(rest, io);
       case 'sync':
@@ -106,6 +108,9 @@ const USAGE = `Usage:
   factory retry <id> [--loops <n>] [--note <text>] [--no-run]
                                     Give an escalated task more attempts
   factory resume <id>               Continue a task from where it stands, or unblock a work item
+  factory verify <task-id> [--note <text>]
+                                    Verify a task's branch as it stands, without building: after
+                                    pushing to it by hand. Hard rules run on the whole branch
   factory sync [<id>]               Pick up approvals, requested changes and merges from pull requests
   factory budget [<user>]           What a requester spent today and this month, against the caps
   factory budget extend <id> [--usd <n>] | --user <name> --usd <n> [--month]
@@ -454,6 +459,22 @@ async function retry(args: string[], io: CliEnv): Promise<number> {
     await ctx.orchestrator.retryTask(wi.id, task.id, { by: await requester(ctx.repoRoot, io), extraLoops: loops, ...(values.note ? { note: values.note } : {}) });
     io.stdout(`Granted ${loops} more attempt${loops > 1 ? 's' : ''} to ${task.id}\n`);
     return values['no-run'] ? 0 : continueTask(ctx, io, wi.id, task.id);
+  });
+}
+
+async function verify(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { note: { type: 'string' } } });
+  return withTask(positionals, 'verify', io, async (ctx, wi, task) => {
+    if (!['ready', 'rework', 'escalated'].includes(task.state) || !task.pr) {
+      io.stderr(`factory verify: ${task.id} is ${task.state.replace(/_/g, ' ')}${task.pr ? '' : ' with no pull request'}; only a task with a pull request that is ready, sent back or escalated can be verified again\n`);
+      return 2;
+    }
+    io.stdout(`Verifying ${task.branch ?? task.id} as it stands, without building...\n`);
+    const outcome = await ctx.orchestrator.verifyOnly(ctx.project, wi.id, task.id, await requester(ctx.repoRoot, io), values.note ?? 'verified again by hand');
+    if (outcome.evidence) io.stdout(`${indent(evidenceLines(outcome.evidence).join('\n'))}\n`);
+    io.stdout(`${{ pass: 'Passed', rework: 'Sent back for rework', escalate: 'Needs a human' }[outcome.verdict]}: ${outcome.reason}\n  run    ${outcome.runId}\n`);
+    if (outcome.verdict === 'rework') io.stdout(`Nothing builds now; factory resume ${task.id} reworks it.\n`);
+    return outcome.verdict === 'pass' ? 0 : 1;
   });
 }
 

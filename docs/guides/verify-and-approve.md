@@ -66,6 +66,12 @@ places:
 - **in `factory log <verify-run>`**: `check`, `review`, `ci` and `verdict` lines, with
   `--full` for outputs and every reason
 
+## Verifying again by hand
+
+If you push a fix to a task's branch yourself, `factory verify <task-id>` judges the branch as it
+stands, without building. It applies the hard rules (secret scan, protected paths) to the whole
+branch, then runs Verify. See [`factory verify`](../reference/cli.md#factory-verify-task-id).
+
 ## Rework
 
 When Verify says rework, the factory builds again **on the same branch**. The agent gets the

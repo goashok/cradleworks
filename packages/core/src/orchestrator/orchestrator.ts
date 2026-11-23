@@ -496,7 +496,13 @@ export class Orchestrator {
    * the project's checks, CI on the pushed commit, and the reviewer agent. Records the
    * evidence, posts it on the PR, and moves the task to ready, rework or escalated.
    */
-  async runVerify(project: Project, workItemId: string, taskId: string): Promise<VerifyOutcome> {
+  async runVerify(
+    project: Project,
+    workItemId: string,
+    taskId: string,
+    /** Scan the whole branch for secrets and protected paths, for commits the factory didn't build. */
+    opts: { scanBranch?: boolean } = {},
+  ): Promise<VerifyOutcome> {
     let wi = await this.#mustLoad(workItemId);
     const task = findTask(wi, taskId);
     if (task.state !== 'verifying') throw new Error(`task ${taskId} is ${task.state}, not verifying`);
@@ -531,6 +537,28 @@ export class Orchestrator {
       const head = await this.#deps.sandbox.exec(sandbox, ['git', 'rev-parse', 'HEAD']);
       const sha = head.stdout.trim();
       if (head.exitCode !== 0 || !/^[0-9a-f]{7,64}$/.test(sha)) throw new Error(`cannot read the branch head: ${head.stderr.trim() || sha}`);
+
+      // Commits pushed by hand never went through Build's hard rules, so apply them to the branch.
+      let branchProtected: string[] = [];
+      if (opts.scanBranch) {
+        step = 'scan';
+        const range = `origin/${base}...HEAD`;
+        const diff = await this.#deps.sandbox.exec(sandbox, ['git', 'diff', '-U0', '--no-color', '--no-ext-diff', range]);
+        if (diff.exitCode !== 0) throw new Error(`could not read the branch to scan it: ${diff.stderr.trim().slice(0, 300)}`);
+        const secrets = scanDiffForSecrets(diff.stdout, this.#deps.hardRules?.secretPatterns);
+        if (secrets.length) {
+          const reason = `secret scan: ${describeSecrets(secrets)}`;
+          await log.write({ type: 'secrets_found', findings: secrets });
+          await this.#emit(wi.id, [
+            { type: 'task_verified', at: this.#clock(), taskId, verdict: 'escalate', reason },
+            { type: 'run_ended', at: this.#clock(), runId, outcome: 'failed' },
+          ]);
+          return { verdict: 'escalate', reason, runId };
+        }
+        const names = await this.#deps.sandbox.exec(sandbox, ['git', 'diff', '--name-only', '--no-renames', range]);
+        branchProtected = protectedPathsIn(names.stdout.split('\n').filter(Boolean), [...(this.#deps.hardRules?.protectedPaths ?? []), ...(project.config.protectedPaths ?? [])]);
+        if (branchProtected.length) await log.write({ type: 'protected_paths_changed', paths: branchProtected });
+      }
 
       // CI runs on its own clock; wait for it while the checks and the review run here.
       const ciPromise = waitForCi(this.#deps.ci, project.repo, sha, { ...this.#deps.ciWait, signal: ciAbort.signal });
@@ -605,7 +633,7 @@ export class Orchestrator {
       await log.write({ type: 'evidence', verdict, reason, sha });
       wi = await this.#emit(wi.id, [
         { type: 'task_evidence_recorded', at: this.#clock(), taskId, evidence },
-        { type: 'task_verified', at: this.#clock(), taskId, verdict, reason },
+        { type: 'task_verified', at: this.#clock(), taskId, verdict, reason, ...(branchProtected.length ? { protectedPaths: branchProtected } : {}) },
         { type: 'run_ended', at: this.#clock(), runId, outcome: 'succeeded' },
       ]);
 
@@ -634,6 +662,16 @@ export class Orchestrator {
       }
       rmSync(checkoutDir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Verifies the task's branch as it stands, without building: for commits pushed to it by hand,
+   * or to see how the checks judge it now. The whole branch goes through Build's hard rules
+   * first. The verdict moves the task as any Verify does; nothing builds after it.
+   */
+  async verifyOnly(project: Project, workItemId: string, taskId: string, requestedBy: string, reason: string): Promise<VerifyOutcome> {
+    await this.#emit(workItemId, [{ type: 'task_reverify_requested', at: this.#clock(), taskId, requestedBy, reason }]);
+    return this.runVerify(project, workItemId, taskId, { scanBranch: true });
   }
 
   // --- the issue flow (M3): intake → Specify → spec gate → Plan → plan check → tasks -----

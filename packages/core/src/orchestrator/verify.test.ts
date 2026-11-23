@@ -208,6 +208,57 @@ describe('skills', () => {
   });
 });
 
+describe('verify only', () => {
+  async function pushByHand(branch: string, files: Record<string, string>) {
+    const work = join(root, `hand-${Math.random().toString(36).slice(2, 8)}`);
+    await git(['clone', '--quiet', '--branch', branch, bare, work]);
+    for (const [path, content] of Object.entries(files)) {
+      execFileSync('mkdir', ['-p', join(work, path, '..')]);
+      execFileSync('sh', ['-c', 'cat > "$1"', 'sh', join(work, path)], { input: content });
+    }
+    await git(['-C', work, 'add', '-A']);
+    await git(['-C', work, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-m', 'by hand']);
+    await git(['-C', work, 'push', '--quiet', 'origin', branch]);
+  }
+
+  it('verifies a ready task again after a push by hand, with the hard rules on the whole branch', async () => {
+    const o = orchestrator({ implement: () => [say('Done.'), write('fixed.txt')] });
+    const { workItemId, taskId } = await start(o);
+    await o.runTask(project, workItemId, taskId);
+    let task = (await o.getWorkItem(workItemId))!.tasks[0]!;
+    expect(task.state).toBe('ready');
+    const reviews = requests.filter((r) => r.profile.role === 'reviewer').length;
+
+    await pushByHand(task.branch!, { '.factory/rules/style.md': 'Keep it short, mostly.\n' });
+    const outcome = await o.verifyOnly(project, workItemId, taskId, 'sam', 'edited a rule by hand');
+    expect(outcome.verdict).toBe('pass');
+    task = (await o.getWorkItem(workItemId))!.tasks[0]!;
+    expect(task.state).toBe('ready');
+    expect(task.protectedPaths).toEqual(['.factory/rules/style.md']);
+    expect(requests.filter((r) => r.profile.role === 'reviewer').length).toBe(reviews + 1);
+    expect(requests.filter((r) => r.profile.role === 'implementer')).toHaveLength(1);
+  });
+
+  it('escalates a branch that has a secret on it, without reviewing', async () => {
+    const o = orchestrator({ implement: () => [say('Done.'), write('fixed.txt')] });
+    const { workItemId, taskId } = await start(o);
+    await o.runTask(project, workItemId, taskId);
+    const task = (await o.getWorkItem(workItemId))!.tasks[0]!;
+    await pushByHand(task.branch!, { '.env': 'DB_PASSWORD=hunter2hunter2\n' });
+    const reviews = requests.filter((r) => r.profile.role === 'reviewer').length;
+    const outcome = await o.verifyOnly(project, workItemId, taskId, 'sam', 'check it');
+    expect(outcome).toMatchObject({ verdict: 'escalate', reason: expect.stringMatching(/^secret scan: /) });
+    expect(requests.filter((r) => r.profile.role === 'reviewer').length).toBe(reviews);
+    expect((await o.getWorkItem(workItemId))!.tasks[0]!.state).toBe('escalated');
+  });
+
+  it('refuses a task that is still building or has no pull request', async () => {
+    const o = orchestrator({ implement: () => [say('Done.'), write('fixed.txt')] });
+    const { workItemId, taskId } = await start(o);
+    await expect(o.verifyOnly(project, workItemId, taskId, 'sam', 'too early')).rejects.toThrow();
+  });
+});
+
 describe('agent checks', () => {
   const SEC = '---\nname: security-review\ndescription: Finds injection and leaked secrets\n---\nLook for SQL built from strings.\n';
   const REWORK = '{"verdict": "rework", "risk": "high", "reasons": ["src/db.ts:3 builds SQL from user input"]}';
