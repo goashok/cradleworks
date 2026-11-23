@@ -81,6 +81,16 @@ Each milestone ends with something that runs. M0 to M4 are done; M5 is built, wi
   reviewer prompt change did not fix that; checks the project runs are the likelier fix. See
   [Measure the factory](guides/evaluating.md).
 
+## Later
+
+Not scheduled; each becomes a milestone when it is planned.
+
+- **A console for teams.** `factory console` is for one person on the machine the factory runs on:
+  it listens on that machine only and has no sign-in. A team sharing one factory on a server
+  needs a console each member opens from their own browser, with sign-in, and with the same
+  permission the tracker applies to `/approve` (only people who may merge can decide a gate). Until
+  then, a team's shared view is the issue and its pull requests.
+
 ## Open questions
 
 - Is the tester worth its cost? The M3 eval compares Verify with and without it.
