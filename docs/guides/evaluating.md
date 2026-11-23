@@ -4,6 +4,9 @@ A factory is only as good as the share of its PRs that are actually right. Cradl
 against a fixed suite of graded tasks, so a change to the core, the prompts, the rules or the model
 can be judged by numbers rather than by impressions.
 
+This page is about Cradleworks' own suite. To measure the factory on your own code, see
+[Measure your own factory](measuring.md).
+
 ## The eval suite
 
 The suite has **30 tasks on two purpose-built reference projects**:

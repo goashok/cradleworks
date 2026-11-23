@@ -68,6 +68,20 @@ change that skips or empties the tests doesn't pass by exiting 0. A failure only
 project's own tests runs once more, since it may be a flaky test you already have; a failing
 hidden test never does.
 
+**JUnit reports by test runner.** Point `reports` at the folder your runner writes, or write to
+`$GRADER_REPORTS`, which every grade sets:
+
+| Runner | In the grading command |
+| --- | --- |
+| Maven Surefire | nothing: `reports: [target/surefire-reports]` |
+| Gradle | nothing: `reports: [build/test-results]` |
+| Vitest | `npx vitest run --reporter=default --reporter=junit --outputFile.junit=$GRADER_REPORTS/junit.xml` |
+| Jest (with the `jest-junit` package) | `JEST_JUNIT_OUTPUT_DIR=$GRADER_REPORTS npx jest --reporters=default --reporters=jest-junit` |
+| pytest | `pytest --junitxml=$GRADER_REPORTS/junit.xml` |
+
+Put hidden tests where their path says so (for example `test/hidden/`), so the default `hidden`
+pattern finds them in the report.
+
 **Check every task before you use it:**
 
 ```sh
@@ -77,7 +91,8 @@ factory eval check my-suite             # or: factory eval check my-suite search
 It grades the base commit (the hidden tests must fail there, or pass with `expect_base: pass`),
 the reference solution (they must pass) and each wrong solution (they must fail). A task that
 passes at its base measures nothing; one that fails with its solution counts right answers as
-wrong.
+wrong. A wrong solution that passes means the hidden tests are too loose: tighten them until it
+fails. This costs nothing, since no agent runs.
 
 **How many tasks.** Ten good tasks tell you more than thirty weak ones. Mix features, bug fixes,
 refactors and dependency changes, and make each one exercise something that's easy to get wrong
@@ -103,8 +118,10 @@ skips tasks already in it. Each task's scratch copy, factory state and log stay 
 `results/<label>.d/<task>/`, so you can replay a run with `CRADLEWORKS_HOME=results/<label>.d/<task>/home factory log <id>`.
 `--jobs <n>` runs several tasks at once.
 
-A run spends real money: about what the same tasks would cost as real work. Run a set of two or
-three tasks first.
+A run spends real money: about what the same tasks would cost as real work. Run one task first,
+then a set of two or three. Agents use the same credential as `factory submit`; when both an API
+key and a subscription token are set up, the API key wins unless you set
+`CRADLEWORKS_CLAUDE_AUTH=subscription` (or `api_key`).
 
 ## 3. Try a variant
 
@@ -162,6 +179,10 @@ band** is the range of its scores over two or more runs. A variant is **better**
 one of its runs scores above the band, **worse** only when every one scores below it. Anything in
 between is noise, however different the numbers look. The comparison only counts tasks every run
 has.
+
+When every run passed every task, compare says so: the tasks are too easy to tell the two
+apart, and you need harder ones. When nothing passed, the tasks are too hard or the grading is
+broken; run `factory eval check`.
 
 This is the rule Cradleworks uses on itself: on its own suite the same factory scores 19 to 21 of
 30, and a change is kept for its score only when it lands outside that.
