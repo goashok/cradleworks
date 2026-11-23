@@ -183,6 +183,17 @@ implementer happens to need one; what it measures is outcomes, and on these 30 t
 reviewer seldom changes them. The only signal that always moved was the reviewer's own send-back
 count.
 
+**The reviewer drill.** So the reviewer is now checked directly. `factory review` hands it a
+change the factory didn't build, with the same prompt and verdict reading as Verify's, and the
+drill gives it the four tasks' known-wrong changes, which it must send back, and their reference
+solutions as controls, which it must pass. It costs about $0.60 and needs no history. The real
+reviewer is not perfectly steady: in five runs it caught three of the wrong changes every time,
+but one (an upgrade that drops a field from error responses) only twice, so that one is reported
+and doesn't count. A wrong change that passes is run once more and counts only if it passes again.
+The weakened reviewer passed a dependency left on a vulnerable version every time it saw it (three
+runs, plus a fresh one after the rule was set, which was flagged), while a fresh run of the real
+reviewer was not. Smoke and weekly runs include the drill.
+
 ## Running it
 
 The eval tooling lives in the private eval repository: the grader, a script that submits each

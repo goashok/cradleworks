@@ -1,6 +1,6 @@
 # Roadmap
 
-Each milestone ends with something that runs. M0 to M4 are done; M5 is built, with one part of its exit check open.
+Each milestone ends with something that runs. M0 to M5 are done.
 
 | | Milestone | Delivers | Exit check | Status |
 | --- | --- | --- | --- | --- |
@@ -9,7 +9,7 @@ Each milestone ends with something that runs. M0 to M4 are done; M5 is built, wi
 | M2 | Verify and gates | Verify station (build, tests, CI, reviewer agent), evidence bundle on the PR, the change gate, the rework loop | A task loops through rework and reaches the change gate with evidence | ✅ Done |
 | M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | ✅ Done |
 | M4 | Budgets and security | Per-user caps, a hard-deny list, scoped tokens, an evaluation of microVM sandboxes | Budget-stop and deny-list tests pass | ✅ Done |
-| M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | ✅ Built. Exit check: a docs-only change is skipped; a weakened reviewer is caught only when it lets a mess through ([why](guides/evaluating.md)) |
+| M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | ✅ Done. Exit check: a docs-only change is skipped; a weakened reviewer is caught by the reviewer drill ([how](guides/evaluating.md)) |
 | M6 | Portability and console | A second agent runtime (OpenAI Codex CLI), a non-GitHub adapter, a local web console | The pass rate holds with no core change | |
 | M7 | Real-codebase validation | The factory on a real repository the team didn't build | Results compared with today's baseline | |
 
@@ -76,11 +76,10 @@ Each milestone ends with something that runs. M0 to M4 are done; M5 is built, wi
   duplicated tests), which the pass rate can't see.
 - **Two fixes the loop found.** The tester writes fewer wrong acceptance tests (25 of 30, from
   19 to 21), and agent answers that quote a brace are read instead of dropped.
-- **Exit check, partly met.** A weakened reviewer scored the same as the real one, because the
-  real one misses the same broken changes (a dependency cycle, a field lost in an upgrade). A
-  reviewer prompt change did not fix that; checks the project runs are the likelier fix. Adding
-  hygiene to the rule flags the first weakened run, but not a second one (26 of 30, every merged
-  change clean): the outcomes only move when the implementer happens to make a mess. See
+- **Exit check met.** A docs-only change is skipped. A weakened reviewer scored as well as the
+  real one on the 30 tasks, twice, since the outcomes only move when the implementer makes a
+  mistake for the reviewer to catch. The reviewer drill checks it directly (`factory review` on
+  known-wrong changes): the weakened reviewer is flagged on every run, the real one on none. See
   [Measure the factory](guides/evaluating.md).
 
 ## Later
