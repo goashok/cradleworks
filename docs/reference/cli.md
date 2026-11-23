@@ -193,3 +193,23 @@ Replays a run from its stored events. Pass a run id (`run_…`) for one run, or 
 | `--json` | Print the raw stored events, one JSON object per line. |
 
 See [Follow and replay runs](../guides/runs-and-logs.md) for how to read the output.
+
+## `factory console [--port <n>]`
+
+A local web page over the factory's state, at `http://127.0.0.1:4747/` by default:
+
+- **Work**: every work item, its state, tasks merged out of planned, and spend. Refreshes every
+  10 seconds.
+- **Waiting on a person**: work items at the spec gate, tasks waiting at the change gate, and tasks
+  that escalated, failed or hit their budget.
+- A work item's page: its tasks with their pull requests, its runs, and the same details as
+  `factory status <id>`. A run's page is its `factory log --full`.
+
+The buttons are the CLI's own commands, run in the directory the console started in: approve, send
+back (`reject --no-run`), retry (`--no-run`), extend a budget (`--no-run`) and cancel. A running
+`factory watch` carries the work on. They keep every rule the CLI has; for example, a change to
+protected files still can't be approved by an AI gate.
+
+The console listens on this machine only. Each button press carries a random token that only the
+console's own pages have, and must come from the console's own address, so a web page elsewhere in
+your browser can't press them.

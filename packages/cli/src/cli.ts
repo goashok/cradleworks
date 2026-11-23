@@ -52,6 +52,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await sync(rest, io);
       case 'watch':
         return await watch(rest, io);
+      case 'console':
+        return await consoleCommand(rest, io);
       case undefined:
       case 'help':
       case '--help':
@@ -100,6 +102,8 @@ const USAGE = `Usage:
                                     Cancel a work item
   factory validate [<dir>]          Check a project's .factory/ setup without running anything
   factory log <run-id|id> [--full] [--json]
+  factory console [--port <n>]      A local web page of the work, what waits on a person, spend and
+                                    run logs, with buttons for approve, send back, retry, extend, cancel
                                     Replay a run's event log: every step, tool call and file change
 
 <id> is a work item id (wi_…) or a task id (task_…).
@@ -491,6 +495,30 @@ async function log(args: string[], io: CliEnv): Promise<number> {
   } finally {
     await store.close();
   }
+}
+
+// --- console ------------------------------------------------------------------
+
+async function consoleCommand(args: string[], io: CliEnv): Promise<number> {
+  const { values } = parseArgs({ args, options: { port: { type: 'string' } } });
+  const port = values.port === undefined ? 4747 : Number(values.port);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError('--port must be a port number');
+  const { startConsole } = await import('./console.ts');
+  // Buttons run the CLI's own commands in this directory, so they keep its rules and permissions.
+  const runCommand = async (argv: string[]) => {
+    let output = '';
+    const code = await run(argv, { ...io, stdout: (s) => (output += s), stderr: (s) => (output += s) });
+    return { code, output };
+  };
+  const { server, url } = await startConsole({ home: factoryHome(io), port, runCommand }, describe);
+  io.stdout(`Console at ${url} (this machine only). Stop with Ctrl-C.\n`);
+  await new Promise<void>((resolve) => {
+    if (io.signal?.aborted) return resolve();
+    io.signal?.addEventListener('abort', () => resolve(), { once: true });
+    server.on('close', () => resolve());
+  });
+  server.close();
+  return 0;
 }
 
 // --- status -------------------------------------------------------------------
