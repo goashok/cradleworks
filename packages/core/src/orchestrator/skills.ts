@@ -36,6 +36,11 @@ export interface SkillLockEntry {
   commit?: string;
   /** {@link skillHash} of the vendored folder. */
   hash: string;
+  /**
+   * Shell commands that must succeed in the project's image for the skill to work, e.g.
+   * `python3 -c "import playwright"`. `factory validate` runs them; not part of the hash.
+   */
+  requires?: string[];
 }
 
 export type SkillsLock = Record<string, SkillLockEntry>;

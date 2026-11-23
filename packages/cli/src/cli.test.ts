@@ -422,6 +422,35 @@ describe('factory skills', () => {
     expect((await factory(['skills', 'update', 'migrations'])).stderr).toContain('is your own skill');
   });
 
+  it("guesses what a skill needs from its scripts, and validate checks it in the image", async () => {
+    const src = join(root, 'web-skill');
+    mkdirSync(join(src, 'scripts'), { recursive: true });
+    writeFileSync(join(src, 'SKILL.md'), SKILL('Browser checks'));
+    writeFileSync(join(src, 'scripts', 'shot.py'), 'from playwright.sync_api import sync_playwright\n');
+    writeFileSync(join(checkout, '.factory/factory.yaml'), withRole.replace('runtime: { agent: scripted, model: none }\n', ''));
+
+    const added = await factory(['skills', 'add', src]);
+    expect(added.stdout).toContain('it looks like it needs');
+    const lock = () => JSON.parse(readFileSync(join(checkout, '.factory/skills.lock'), 'utf8')).migrations;
+    expect(lock().requires).toEqual(['python3 --version', expect.stringContaining('chromium.launch()')]);
+
+    // The process sandbox runs on this machine, so the check runs here.
+    expect(await factory(['skills', 'require', 'migrations', 'true', 'echo missing-tool >&2; exit 3'])).toMatchObject({ code: 0 });
+    const failing = await factory(['validate']);
+    expect(failing.code).toBe(2);
+    expect(failing.stderr).toContain('skill migrations needs `echo missing-tool >&2; exit 3` to work, and it fails in unused: missing-tool');
+    expect(failing.stderr).not.toContain('needs `true`');
+
+    // Hash and requirements are separate: locking a hand edit keeps them.
+    writeFileSync(join(checkout, '.factory/skills/migrations/notes.md'), 'ours\n');
+    await factory(['skills', 'lock', 'migrations']);
+    expect(lock().requires).toEqual(['true', 'echo missing-tool >&2; exit 3']);
+
+    expect((await factory(['skills', 'require', 'migrations'])).stdout).toContain('needs nothing checked');
+    expect(lock().requires).toBeUndefined();
+    expect((await factory(['validate'])).code).toBe(0);
+  });
+
   it('reports a role naming a missing skill, and a folder without a SKILL.md', async () => {
     writeFileSync(join(checkout, '.factory/factory.yaml'), withRole.replace('runtime: { agent: scripted, model: none }\n', ''));
     mkdirSync(join(checkout, '.factory/skills/empty'), { recursive: true });

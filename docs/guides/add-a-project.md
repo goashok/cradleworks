@@ -210,7 +210,15 @@ and which roles use it. `factory validate` fails when a vendored skill doesn't m
 an edit is never silent.
 
 A skill can't widen the sandbox. If its scripts need a tool, add it to your image; if they need a
-host, add it to `sandbox.network.allow`. Treat a marketplace skill like a new dependency: read it
+host, add it to `sandbox.network.allow`. So that a missing tool shows up before a run, not as a skill
+the agent never manages to use, each skill can list commands that must succeed in the image.
+`factory skills add` guesses them from the skill's scripts (Python scripts need `python3`; ones
+that import Playwright need it and a browser that launches) and records them in the lock;
+`factory skills require <name> <command>...` replaces them, and with no commands drops them.
+`factory validate` runs each one in a throwaway container of `stack.image`, with no network, and
+fails on any that doesn't succeed. For `webapp-testing`, for example, that means adding Python,
+`pip install playwright==<version>` and `python3 -m playwright install --with-deps chromium` to
+`.factory/image/Dockerfile`, building it under a new tag, and pointing `stack.image` at it. Treat a marketplace skill like a new dependency: read it
 before you merge it. It lives under `.factory/`, so merging it always needs a person.
 
 ## 4. Switch to GitHub

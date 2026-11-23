@@ -189,9 +189,10 @@ happens on this machine; nothing is committed, so the result is a change to revi
 | Command | Does |
 | --- | --- |
 | `list` | Each vendored skill: locked, not locked or changed since locked; where it came from; which roles use it |
-| `add <git-url> [--path <dir>] [--ref <ref>]` | Clones the repository, takes the folder at `--path` (with a `SKILL.md`), copies it to `.factory/skills/<name>/`, and records the URL, path, ref, commit and a content hash. Prints the files, the whole `SKILL.md` and any scripts. `--name` overrides the name in `SKILL.md` |
+| `add <git-url> [--path <dir>] [--ref <ref>]` | Clones the repository, takes the folder at `--path` (with a `SKILL.md`), copies it to `.factory/skills/<name>/`, and records the URL, path, ref, commit and a content hash. Prints the files, the whole `SKILL.md` and any scripts, and records what its scripts look like they need in the image (`--requires <command>`, repeatable, sets that instead). `--name` overrides the name in `SKILL.md` |
 | `add <folder>` | The same for a folder on this machine, recorded as your own (`local`) |
 | `update <name> [--ref <ref>]` | Fetches the locked source again (at `--ref`, or the locked ref), shows what changed, and replaces the copy and its lock entry |
+| `require <name> [<command>...]` | Sets the commands that must succeed in the project's image for the skill to work, replacing the ones `add` guessed from its scripts; with none, drops them. `factory validate` runs them |
 | `lock <name>` | Records the folder as it is now. A changed copy of someone else's skill becomes your own, with where it was forked from |
 
 Exit status: 0 done, 2 refused (bad source, an existing skill on `add`, a local skill on `update`).
@@ -210,6 +211,7 @@ It reports:
 - `context.include` paths that don't exist
 - prompt additions (`.factory/prompts/*.md`) not named for a role, and empty ones (a note)
 - skills: a folder without a valid `SKILL.md`, one not in `.factory/skills.lock` or changed since it was locked, a lock entry with no folder, and a role naming a skill that isn't there; a vendored skill no role uses is a note
+- a skill's requirements: each command recorded with `factory skills require` (or guessed by `add`) for a skill a role uses is run in a throwaway container of `stack.image`, with no network; one that fails is a problem. When the image isn't built yet, it's a note instead
 - whether `stack.image` has been built on this machine (a note, not an error)
 
 It prints `ok` and exits 0 when there are no problems.

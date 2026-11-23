@@ -85,6 +85,52 @@ export function checkSkills(repoRoot: string, config: ProjectConfig): { problems
   return { problems, notes, count: vendored.length };
 }
 
+/**
+ * What a skill's files suggest it needs in the image, as commands that succeed when it's there.
+ * A guess from its scripts; the team corrects it with `factory skills require`.
+ */
+export function guessRequirements(files: SkillFile[]): string[] {
+  const out: string[] = [];
+  const scripts = files.filter((f) => /\.(py|js|mjs|cjs|ts|sh)$/.test(f.path) || /^#!/.test(f.content));
+  const python = scripts.filter((f) => f.path.endsWith('.py') || /^#!.*python/.test(f.content));
+  const node = scripts.filter((f) => /\.(js|mjs|cjs|ts)$/.test(f.path) || /^#!.*node/.test(f.content));
+  if (python.length) out.push('python3 --version');
+  if (python.some((f) => /^\s*(from|import)\s+playwright\b/m.test(f.content))) {
+    // Imports and launches a browser: the package alone isn't enough without one installed.
+    out.push('python3 -c "from playwright.sync_api import sync_playwright as p; b = p().start().chromium.launch(); b.close()"');
+  }
+  if (node.length) out.push('node --version');
+  if (node.some((f) => /from\s+['"]@?playwright|require\(['"]@?playwright/.test(f.content))) out.push('node -e "require.resolve(\'playwright\')"');
+  return out;
+}
+
+/** Runs each command in the project's image; returns the ones that failed, with why. */
+export type RequirementRunner = (command: string) => Promise<{ ok: boolean; detail: string }>;
+
+/** For `factory validate`: each skill a role uses, checked against the image. */
+export async function checkRequirements(
+  repoRoot: string,
+  config: ProjectConfig,
+  runner: RequirementRunner | undefined,
+): Promise<{ problems: string[]; notes: string[] }> {
+  const problems: string[] = [];
+  const notes: string[] = [];
+  const lock = readLock(repoRoot);
+  const users = usedBy(config);
+  for (const [name, entry] of Object.entries(lock)) {
+    if (!users.has(name) || !entry.requires?.length) continue;
+    if (!runner) {
+      notes.push(`could not check what skill ${name} needs (${entry.requires.join('; ')}) in ${config.stack.image}`);
+      continue;
+    }
+    for (const command of entry.requires) {
+      const result = await runner(command);
+      if (!result.ok) problems.push(`skill ${name} needs \`${command}\` to work, and it fails in ${config.stack.image}${result.detail ? `: ${result.detail}` : ''}. Add it to the image, or change what the skill needs with factory skills require ${name}`);
+    }
+  }
+  return { problems, notes };
+}
+
 /** A git URL, as opposed to a folder on this machine. */
 const isGitUrl = (s: string) => /^(https?:\/\/|git@|ssh:\/\/|git\+)/.test(s) || s.endsWith('.git');
 
@@ -128,14 +174,20 @@ function copyInto(from: string, to: string): void {
 }
 
 const USAGE = `factory skills list
-factory skills add <git-url | folder> [--path <dir>] [--ref <ref>] [--name <name>]
+factory skills add <git-url | folder> [--path <dir>] [--ref <ref>] [--name <name>] [--requires <command>]...
 factory skills update <name> [--ref <ref>]
 factory skills lock <name>
+factory skills require <name> [<command>...]
 `;
+
+function showRequires(io: SkillsIo, name: string, requires: string[], guessed: boolean): void {
+  if (!requires.length) return;
+  io.stdout(`\n${guessed ? 'From its scripts, it looks like it needs' : 'It needs'} these to succeed in the project's image (factory validate checks them):\n${requires.map((r) => `  ${r}`).join('\n')}\n${guessed ? `Change them with factory skills require ${name} <command>... (none to drop them).\n` : ''}`);
+}
 
 export async function skillsCommand(args: string[], io: SkillsIo, repoRoot: string, config: ProjectConfig): Promise<number> {
   const [sub, ...rest] = args;
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { path: { type: 'string' }, ref: { type: 'string' }, name: { type: 'string' } } });
+  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { path: { type: 'string' }, ref: { type: 'string' }, name: { type: 'string' }, requires: { type: 'string', multiple: true } } });
   const lock = readLock(repoRoot);
   try {
     switch (sub) {
@@ -169,8 +221,11 @@ export async function skillsCommand(args: string[], io: SkillsIo, repoRoot: stri
           const entry: SkillLockEntry = local
             ? { source: 'local', hash: skillHash(files) }
             : { source: source.replace(/^git\+/, ''), ...(values.path ? { path: values.path } : {}), ...(values.ref ? { ref: values.ref } : {}), ...(fetched.commit ? { commit: fetched.commit } : {}), hash: skillHash(files) };
+          const requires = values.requires ?? guessRequirements(files);
+          if (requires.length) entry.requires = requires;
           writeLock(repoRoot, { ...lock, [name]: entry });
           show(io, name, files);
+          showRequires(io, name, requires, !values.requires);
           io.stdout(`\nVendored into ${SKILLS_DIR}/${name}/ and pinned in ${SKILLS_LOCK}. Nothing is committed: review it, then give it to a role in factory.yaml\n  runtime:\n    roles:\n      <role>:\n        skills: [${name}]\nand commit. It takes effect once merged; changes under .factory/ always wait for a person.\n`);
           return 0;
         } finally {
@@ -197,6 +252,8 @@ export async function skillsCommand(args: string[], io: SkillsIo, repoRoot: stri
           writeLock(repoRoot, { ...lock, [name]: { ...entry, ...(values.ref ? { ref: values.ref } : {}), ...(fetched.commit ? { commit: fetched.commit } : {}), hash: skillHash(files) } });
           io.stdout(`${diff.stdout}`);
           show(io, name, files);
+          const newly = guessRequirements(files).filter((r) => !(entry.requires ?? []).includes(r));
+          if (newly.length) io.stdout(`\nThe new version's scripts suggest it may also need:\n${newly.map((r) => `  ${r}`).join('\n')}\nAdd them with factory skills require ${name} <command>...\n`);
           io.stdout(`\nUpdated ${SKILLS_DIR}/${name}/ to ${fetched.commit?.slice(0, 12) ?? 'the new version'}. Review the change (git diff) and commit it.\n`);
           return 0;
         } finally {
@@ -213,10 +270,19 @@ export async function skillsCommand(args: string[], io: SkillsIo, repoRoot: stri
         // A changed copy of someone else's skill is now the team's own; say where it came from.
         const entry: SkillLockEntry =
           before && before.source !== 'local' && before.hash !== skillHash(files)
-            ? { source: 'local', path: `forked from ${before.source}${before.path ? ` ${before.path}` : ''}${before.commit ? ` @ ${before.commit}` : ''}`, hash: skillHash(files) }
+            ? { source: 'local', path: `forked from ${before.source}${before.path ? ` ${before.path}` : ''}${before.commit ? ` @ ${before.commit}` : ''}`, hash: skillHash(files), ...(before.requires ? { requires: before.requires } : {}) }
             : { ...(before ?? { source: 'local' }), hash: skillHash(files) };
         writeLock(repoRoot, { ...lock, [name]: entry });
         io.stdout(`Locked ${name} as it is now${entry.source === 'local' && before?.source !== 'local' && before ? ` (now your own, ${entry.path})` : ''}.\n`);
+        return 0;
+      }
+      case 'require': {
+        const [name, ...commands] = positionals;
+        const entry = name ? lock[name] : undefined;
+        if (!name || !entry) throw new Error(`${name ?? 'require'} is not in ${SKILLS_LOCK}`);
+        const { requires: _old, ...rest } = entry;
+        writeLock(repoRoot, { ...lock, [name]: commands.length ? { ...rest, requires: commands } : rest });
+        io.stdout(commands.length ? `${name} now needs:\n${commands.map((c) => `  ${c}`).join('\n')}\n` : `${name} needs nothing checked.\n`);
         return 0;
       }
       default:

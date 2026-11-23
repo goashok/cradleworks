@@ -11,7 +11,7 @@ import { AGENT_ROLES, type AgentRuntime, type CI, type ItemRef, type Tracker } f
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
-import { checkSkills, skillsCommand } from './skills.ts';
+import { checkRequirements, checkSkills, skillsCommand, type RequirementRunner } from './skills.ts';
 import { AgentsByName } from './agents.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
@@ -185,11 +185,19 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
     else if (!readFileSync(join(repoRoot, path), 'utf8').trim()) notes.push(`${path} is empty, so the ${role} gets no addition`);
   }
 
+  let runner: RequirementRunner | undefined;
   if (config.adapters.sandbox === 'local-docker') {
     const found = await imageExists(config.stack.image);
     if (found === false) notes.push(`stack.image ${config.stack.image} is not built on this machine yet`);
     if (found === undefined) notes.push('could not ask Docker whether stack.image exists');
+    if (found) runner = (command) => inImage(config.stack.image, command);
+  } else if (config.adapters.sandbox === 'process') {
+    // The test-only sandbox runs on this machine, so this machine is its "image".
+    runner = (command) => onHost(command, repoRoot);
   }
+  const requirements = await checkRequirements(repoRoot, config, runner);
+  problems.push(...requirements.problems);
+  notes.push(...requirements.notes);
 
   const rules = config.context.rules.flatMap((p) => globSync(p, { cwd: repoRoot })).length;
   io.stdout(`${relativeOrSelf(io.cwd, repoRoot)}: project ${config.project}, ${rules} rule file(s), ${additions.length} prompt addition(s), ${skills.count} skill(s), image ${config.stack.image}\n`);
@@ -198,6 +206,32 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   io.stdout(problems.length === 0 ? 'ok\n' : '');
   return problems.length === 0 ? 0 : 2;
 }
+
+/** Runs a skill's requirement in a throwaway container of the image, with no network. */
+async function inImage(image: string, command: string): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await promisify(execFile)(findDocker(), ['run', '--rm', '--network', 'none', '--entrypoint', 'sh', image, '-c', command], { timeout: 120_000 });
+    return { ok: true, detail: '' };
+  } catch (error) {
+    return { ok: false, detail: lastLine(error) };
+  }
+}
+
+async function onHost(command: string, cwd: string): Promise<{ ok: boolean; detail: string }> {
+  try {
+    await promisify(execFile)('sh', ['-c', command], { cwd, timeout: 120_000 });
+    return { ok: true, detail: '' };
+  } catch (error) {
+    return { ok: false, detail: lastLine(error) };
+  }
+}
+
+const lastLine = (error: unknown) => {
+  const e = error as { stderr?: string; stdout?: string; killed?: boolean; code?: unknown };
+  if (e.killed) return 'timed out';
+  const text = `${e.stderr ?? ''}\n${e.stdout ?? ''}`.trim().split('\n').filter(Boolean);
+  return (text.at(-1) ?? `exit ${String(e.code ?? '?')}`).slice(0, 200);
+};
 
 async function imageExists(image: string): Promise<boolean | undefined> {
   try {
