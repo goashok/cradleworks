@@ -151,6 +151,27 @@ Good rules are:
 Rules live in git, so changing what agents do is a reviewed pull request, not a prompt edit
 somewhere.
 
+### Prompt additions for one role
+
+Rules are for every agent. When one role should work differently on this codebase, write a prompt
+addition for it: `.factory/prompts/<role>.md`, where the role is `specifier`, `planner`,
+`implementer`, `tester` or `reviewer`.
+
+```markdown
+Check that every new migration can be rolled back, and say so in your reasons.
+```
+
+The file's text is added to that role's built-in prompt, after it, and the built-in instructions
+win where the two conflict: an addition can't change the reviewer's verdict format, or stop the
+implementer running the tests. The reviewer's addition also applies to the `ai` spec and plan
+checks, which the reviewer role runs.
+
+Additions are read from the base branch, never from the branch being built or reviewed, so a
+change can't rewrite the instructions of the agents judging it. A new or edited addition takes
+effect once it's merged. It shares the rules' 256 KB budget and is loaded first. Each run's log,
+and the run page in `factory console`, lists every rule file and addition the agent was given,
+with a content hash, so you can tell exactly which version a run used.
+
 ## 4. Switch to GitHub
 
 With `scm: github`, the factory pushes branches and opens real pull requests on the repository
@@ -185,5 +206,6 @@ Then [write a good task](writing-tasks.md), and [follow the run](runs-and-logs.m
 - [ ] an image with your toolchain, git and `claude`, built and tagged as `stack.image`
 - [ ] the hosts your build downloads from in `sandbox.network.allow`
 - [ ] one to three rule files about what's unusual in this codebase
+- [ ] optional: a prompt addition for a role that should work differently here
 - [ ] `factory validate` says `ok`
 - [ ] a GitHub token (`GITHUB_TOKEN` or `gh auth login`) and a Claude credential

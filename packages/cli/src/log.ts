@@ -60,9 +60,11 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
       return line('sandbox', `${String(p.sandboxId ?? '')} on ${String(p.branch ?? '')} from ${String(p.baseRef ?? '')}; network ${net?.mode ?? '?'}: ${(net?.allow ?? []).join(', ')}`);
     }
     case 'context_pack_built': {
-      const files = (p.files as Array<{ path: string }> | undefined) ?? [];
+      const files = (p.files as Array<{ path: string; kind?: string; sha256?: string }> | undefined) ?? [];
       const dropped = (p.dropped as unknown[] | undefined) ?? [];
-      return line('context', `${files.map((f) => f.path).join(', ')}${dropped.length ? ` (${dropped.length} dropped)` : ''}`);
+      const hash = (f: { sha256?: string }) => (f.sha256 ? ` ${f.sha256.replace('sha256:', '').slice(0, 10)}` : '');
+      const shown = files.map((f) => `${f.kind === 'prompt' ? 'prompt addition ' : ''}${f.path}${hash(f)}`);
+      return line('context', `${p.role ? `${String(p.role)}: ` : ''}${shown.join(', ')}${dropped.length ? ` (${dropped.length} dropped)` : ''}`);
     }
     case 'agent_started': {
       const limits = p.limits as { maxWallSeconds?: number; maxSpendUsd?: number } | undefined;

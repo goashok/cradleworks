@@ -2,7 +2,9 @@ import type { AgentEvent } from './agent-events.ts';
 import type { Limits, Usage } from './common.ts';
 import type { SandboxHandle } from './sandbox.ts';
 
-export type AgentRole = 'specifier' | 'planner' | 'implementer' | 'tester' | 'reviewer';
+/** Every agent role, in the order work meets them. */
+export const AGENT_ROLES = ['specifier', 'planner', 'implementer', 'tester', 'reviewer'] as const;
+export type AgentRole = (typeof AGENT_ROLES)[number];
 
 /** Which agent and model play a role. Resolved from project config by the core. */
 export interface AgentProfile {

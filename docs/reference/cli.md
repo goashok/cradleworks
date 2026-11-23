@@ -192,6 +192,7 @@ It reports:
   have no `.factory/factory.yaml`
 - `context.rules` patterns that match no file
 - `context.include` paths that don't exist
+- prompt additions (`.factory/prompts/*.md`) not named for a role, and empty ones (a note)
 - whether `stack.image` has been built on this machine (a note, not an error)
 
 It prints `ok` and exits 0 when there are no problems.

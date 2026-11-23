@@ -35,7 +35,7 @@ import { resolveAgent, type ProjectConfig } from '../config/types.ts';
 import type { WorkItemEvent } from '../domain/events.ts';
 import { newId, type IdKind } from '../domain/ids.ts';
 import { TERMINAL_WORK_ITEM_STATES, type CheckResult, type CiResult, type Evidence, type GateMode, type ReviewResult, type Station, type Task, type TaskState, type VerifyVerdict, type WorkItem, type WorkItemState } from '../domain/types.ts';
-import { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES } from './context-pack.ts';
+import { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES, promptAdditionPath, withAddition, type ContextPack } from './context-pack.ts';
 import { implementerPrompt, reviewerPrompt } from './prompts.ts';
 import {
   baseDirective,
@@ -318,8 +318,7 @@ export class Orchestrator {
       const startSha = (await this.#deps.sandbox.exec(sandbox, ['git', 'rev-parse', 'HEAD'])).stdout.trim();
 
       step = 'context';
-      const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
-      await log.write({ type: 'context_pack_built', ...pack });
+      const pack = await this.#context(project, sandbox, 'implementer', base, log);
       const contextFiles = pack.files.map((f) => f.path);
 
       const spec = await this.#specFor(task);
@@ -343,7 +342,7 @@ export class Orchestrator {
         runId,
         profile,
         sandbox,
-        rolePrompt: implementerPrompt(project.config, contextFiles),
+        rolePrompt: withAddition(implementerPrompt(project.config, contextFiles), pack.addition),
         input,
         contextFiles,
         tools: { allow: [], deny: [] },
@@ -387,7 +386,7 @@ export class Orchestrator {
           const acceptance = task.evidence?.checks.find((c) => c.name === 'acceptance');
           if (rework && spec && task.acceptanceTests && !task.testDisputes && acceptance && (acceptance.outcome === 'failed' || acceptance.outcome === 'timed_out')) {
             step = 'test review';
-            const review = await this.#reviewAcceptanceTests(project, workItemId, task, spec, sandbox, reason, acceptance.outputTail ?? '', runId, log);
+            const review = await this.#reviewAcceptanceTests(project, workItemId, task, spec, sandbox, reason, acceptance.outputTail ?? '', runId, log, base);
             const latest = await this.#emit(wi.id, [
               { type: 'task_tests_disputed', at: this.#clock(), taskId, runId: `${runId}-test-review`, dispute: reason, verdict: review.verdict, reasons: review.reasons, ...(review.tests ?? {}) },
               { type: 'run_ended', at: this.#clock(), runId, outcome: 'succeeded' },
@@ -1069,7 +1068,7 @@ export class Orchestrator {
     input: string,
     charge: { project: Project; workItemId?: string; taskId?: string },
   ): Promise<{ review: ReviewResult; stop?: undefined; cost: number } | { review?: undefined; stop: string; cost: number }> {
-    const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
+    const pack = await this.#context(project, sandbox, 'reviewer', base, log);
     const contextFiles = pack.files.map((f) => f.path);
     const limits = { maxWallSeconds: this.#deps.reviewWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
     let done: Extract<AgentEvent, { type: 'done' }> | undefined;
@@ -1080,7 +1079,7 @@ export class Orchestrator {
         runId: reviewAttempt === 1 ? runId : `${runId}-review2`,
         profile,
         sandbox,
-        rolePrompt: reviewerPrompt(project.config, contextFiles, base),
+        rolePrompt: withAddition(reviewerPrompt(project.config, contextFiles, base), pack.addition),
         input: reviewAttempt === 1 ? input : `${input}\n\n${REVIEW_RETRY_NOTE}`,
         contextFiles,
         tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
@@ -1171,13 +1170,12 @@ export class Orchestrator {
       const network = withHosts(project.config.network, this.#deps.runtime.requiredHosts(profile));
       sandbox = await this.#deps.sandbox.create({ taskId: `${shortId(wi.id)}-${tag}`, source: checkout, baseRef: base, branch: `factory/${shortId(wi.id)}-${tag}`, image: project.config.stack.image, network });
       await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch: base, baseRef: base, network });
-      const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
-      await log.write({ type: 'context_pack_built', ...pack });
+      const pack = await this.#context(project, sandbox, opts.role, base, log);
       const contextFiles = pack.files.map((f) => f.path);
       step = 'agent';
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-      const done = await this.#runAgent(log, { runId: opts.agentRunId ?? runId, profile, sandbox, rolePrompt: opts.rolePrompt(contextFiles), input: opts.input, contextFiles, tools: { allow: [], deny: READ_ONLY }, limits }, { project, workItemId: wi.id });
+      const done = await this.#runAgent(log, { runId: opts.agentRunId ?? runId, profile, sandbox, rolePrompt: withAddition(opts.rolePrompt(contextFiles), pack.addition), input: opts.input, contextFiles, tools: { allow: [], deny: READ_ONLY }, limits }, { project, workItemId: wi.id });
       const cost = done?.total.costUsd ?? 0;
       if (done?.outcome !== 'succeeded') return { ok: false, error: `the ${opts.role} agent run ${done?.outcome ?? 'ended without a result'}${done?.error ? `: ${done.error}` : ''}`, cost };
       return { ok: true, summary: done.summary, cost };
@@ -1233,11 +1231,11 @@ export class Orchestrator {
       const network = withHosts(project.config.network, this.#deps.runtime.requiredHosts(profile));
       sandbox = await this.#deps.sandbox.create({ taskId: `${shortId(task.id)}-tester-${tag}`, source: checkout, baseRef: base, branch: `factory/${shortId(task.id)}-tests-${tag}`, image: project.config.stack.image, network });
       await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch: base, baseRef: base, network });
-      const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
+      const pack = await this.#context(project, sandbox, 'tester', base, log);
       const contextFiles = pack.files.map((f) => f.path);
       const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
-      const done = await this.#runAgent(log, { runId: `${runId}-tester`, profile, sandbox, rolePrompt: testerPrompt(project.config, contextFiles), input: testerInput(spec, task), contextFiles, tools: { allow: [], deny: [] }, limits }, { project, workItemId, taskId: task.id });
+      const done = await this.#runAgent(log, { runId: `${runId}-tester`, profile, sandbox, rolePrompt: withAddition(testerPrompt(project.config, contextFiles), pack.addition), input: testerInput(spec, task), contextFiles, tools: { allow: [], deny: [] }, limits }, { project, workItemId, taskId: task.id });
       const cost = done?.total.costUsd ?? 0;
       if (done?.outcome !== 'succeeded') {
         await log.write({ type: 'acceptance_tests', files: [], note: `the tester run ${done?.outcome ?? 'ended without a result'}` });
@@ -1272,13 +1270,14 @@ export class Orchestrator {
     failure: string,
     runId: string,
     log: RunLog,
+    base: string,
   ): Promise<{ verdict: 'revised' | 'upheld'; reasons: string[]; tests?: { files: string[]; patch: string } }> {
     const tests = task.acceptanceTests!;
     const exec = (argv: string[], stdin?: string) => this.#deps.sandbox.exec(sandbox, argv, stdin === undefined ? {} : { stdin });
     const applied = await exec(['git', 'apply', '--whitespace=nowarn', '-'], tests.patch);
     if (applied.exitCode !== 0) return { verdict: 'upheld', reasons: [`The acceptance tests no longer apply to the branch, so they could not be reviewed: ${(applied.stderr || applied.stdout).trim().slice(0, 300)}`] };
     const profile: AgentProfile = { role: 'tester', ...resolveAgent(project.config, 'tester') };
-    const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
+    const pack = await this.#context(project, sandbox, 'tester', base, log);
     const contextFiles = pack.files.map((f) => f.path);
     const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
     await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
@@ -1286,7 +1285,7 @@ export class Orchestrator {
       runId: `${runId}-test-review`,
       profile,
       sandbox,
-      rolePrompt: testReviewPrompt(project.config, contextFiles),
+      rolePrompt: withAddition(testReviewPrompt(project.config, contextFiles), pack.addition),
       input: testReviewInput(spec, task, tests, failure, dispute),
       contextFiles,
       tools: { allow: [], deny: [] },
@@ -1505,6 +1504,20 @@ export class Orchestrator {
    * and what it cost is recorded against the task (or work item) and the requester. With
    * nothing left it doesn't start, and reports a `budget: …` error instead.
    */
+  /**
+   * What an agent in `role` is given: the project rules, and the team's prompt addition for the
+   * role. The addition is read from the base branch, never the branch under work, so a change can't
+   * rewrite the instructions of the agents that build or judge it. Logged with a hash per file.
+   */
+  async #context(project: Project, sandbox: SandboxHandle, role: AgentRole, base: string, log: RunLog): Promise<ContextPack> {
+    const path = promptAdditionPath(role);
+    const shown = await this.#deps.sandbox.exec(sandbox, ['git', 'show', `origin/${base}:${path}`]);
+    const addition = shown.exitCode === 0 && shown.stdout.trim() ? { path, text: shown.stdout } : undefined;
+    const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES, addition);
+    await log.write({ type: 'context_pack_built', role, files: pack.files, dropped: pack.dropped, budgetBytes: pack.budgetBytes });
+    return pack;
+  }
+
   async #runAgent(
     log: RunLog,
     request: Parameters<AgentRuntime['start']>[0],

@@ -214,7 +214,7 @@ describe('factory validate', () => {
   it('checks a project without running anything', async () => {
     const r = await factory(['validate']);
     expect(r).toMatchObject({ code: 0, stderr: '' });
-    expect(r.stdout).toContain('project demo, 1 rule file(s), image unused');
+    expect(r.stdout).toContain('project demo, 1 rule file(s), 0 prompt addition(s), image unused');
     expect(r.stdout).toMatch(/ok\n$/);
   });
 
@@ -239,6 +239,20 @@ describe('factory validate', () => {
     expect(r.stdout).toContain('ci "github-actions" does not build local-git repositories');
     writeFileSync(join(checkout, '.factory/factory.yaml'), FACTORY_YAML);
     expect((await factory(['validate'])).stdout).toContain('no tracker: submit works, factory watch does not');
+  });
+
+  it('checks prompt additions are named for a role', async () => {
+    mkdirSync(join(checkout, '.factory/prompts'), { recursive: true });
+    writeFileSync(join(checkout, '.factory/prompts/reviewer.md'), 'Check migrations are reversible.\n');
+    writeFileSync(join(checkout, '.factory/prompts/tester.md'), '\n');
+    const ok = await factory(['validate']);
+    expect(ok).toMatchObject({ code: 0, stderr: '' });
+    expect(ok.stdout).toContain('2 prompt addition(s)');
+    expect(ok.stdout).toContain('.factory/prompts/tester.md is empty');
+    writeFileSync(join(checkout, '.factory/prompts/reveiwer.md'), 'Typo.\n');
+    const bad = await factory(['validate']);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain('.factory/prompts/reveiwer.md: "reveiwer" is not a role');
   });
 
   it('shows config errors with line numbers', async () => {

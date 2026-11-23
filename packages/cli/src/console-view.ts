@@ -500,8 +500,15 @@ function environment(events: StoredEvent[]): string {
       const net = p.network as { mode?: string; allow?: string[] } | undefined;
       rows.push(`<li>Sandbox <code>${esc(p.sandboxId)}</code> on <code>${esc(p.branch)}</code>; network ${esc(net?.mode ?? '?')}${net?.allow?.length ? `: ${net.allow.map((h) => `<code>${esc(h)}</code>`).join(' ')}` : ''}</li>`);
     } else if (e.type === 'context_pack_built') {
-      const files = (p.files as Array<{ path: string }> | undefined) ?? [];
-      rows.push(`<li>Project rules given to the agent: ${files.length ? files.map((f) => `<code>${esc(f.path)}</code>`).join(', ') : 'none'}</li>`);
+      const files = (p.files as Array<{ path: string; kind?: string; sha256?: string }> | undefined) ?? [];
+      const dropped = (p.dropped as string[] | undefined) ?? [];
+      const file = (f: { path: string; sha256?: string }) => `<code>${esc(f.path)}</code>${f.sha256 ? ` <span class="muted small" title="${esc(f.sha256)}">${esc(f.sha256.replace('sha256:', '').slice(0, 10))}</span>` : ''}`;
+      const added = files.filter((f) => f.kind === 'prompt');
+      const rules = files.filter((f) => f.kind !== 'prompt');
+      const who = p.role ? `the ${esc(p.role)}` : 'the agent';
+      if (added.length) rows.push(`<li>Team's prompt addition for ${who}: ${added.map(file).join(', ')}</li>`);
+      rows.push(`<li>Project rules given to ${who}: ${rules.length ? rules.map(file).join(', ') : 'none'}</li>`);
+      if (dropped.length) rows.push(`<li class="bad-t">Left out, over the context budget: ${dropped.map((d) => `<code>${esc(d)}</code>`).join(', ')}</li>`);
     } else if (e.type === 'network_decisions') {
       const ds = (p.decisions as Array<{ host: string; port: number; decision: string; reason?: string }> | undefined) ?? [];
       const denied = ds.filter((d) => d.decision === 'deny');

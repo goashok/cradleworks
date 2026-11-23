@@ -64,6 +64,11 @@ the build and tests before finishing. The Verify station runs them again itself,
 | `rules` | glob or list of globs | `[.factory/rules/*.md]` | ✅ | Rule files every agent is told to read and follow. They're matched in the checkout and share a 256 KB budget, and any file over budget is dropped and listed in the log. Each pattern must match at least one file. |
 | `include` | path or list | `[.]` | ⏳ later | The parts of the repo the repo map will cover. Today it's checked to exist; the agent can read the whole checkout either way. |
 
+**Prompt additions** need no config: a file `.factory/prompts/<role>.md` (`specifier`, `planner`,
+`implementer`, `tester` or `reviewer`) is added to that role's prompt. It is read from the base
+branch, loaded before the rules in the same 256 KB budget, and logged with a content hash. See
+[Prompt additions for one role](../guides/add-a-project.md#prompt-additions-for-one-role).
+
 ## `gates` (required, defaults provided)
 
 Each gate is `human`, `ai` or `skip`.

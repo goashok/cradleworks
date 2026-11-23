@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { ConfigError, DENIED_COMMANDS, KNOWN_CI_PATHS, KNOWN_SECRET_PATTERNS, loadProjectConfig } from '@cradleworks/config';
 import { Orchestrator, TERMINAL_WORK_ITEM_STATES, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem, type WorkProgress } from '@cradleworks/core';
-import type { AgentRuntime, CI, ItemRef, Tracker } from '@cradleworks/interfaces';
+import { AGENT_ROLES, type AgentRuntime, type CI, type ItemRef, type Tracker } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
@@ -164,6 +164,14 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
     if (!found) problems.push(`context.include: ${path} does not exist`);
   }
 
+  // Prompt additions: one file per role, added to that role's prompt once on the base branch.
+  const additions = globSync('.factory/prompts/*.md', { cwd: repoRoot }).sort();
+  for (const path of additions) {
+    const role = path.slice('.factory/prompts/'.length, -'.md'.length);
+    if (!(AGENT_ROLES as readonly string[]).includes(role)) problems.push(`${path}: "${role}" is not a role (roles: ${AGENT_ROLES.join(', ')})`);
+    else if (!readFileSync(join(repoRoot, path), 'utf8').trim()) notes.push(`${path} is empty, so the ${role} gets no addition`);
+  }
+
   if (config.adapters.sandbox === 'local-docker') {
     const found = await imageExists(config.stack.image);
     if (found === false) notes.push(`stack.image ${config.stack.image} is not built on this machine yet`);
@@ -171,7 +179,7 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   }
 
   const rules = config.context.rules.flatMap((p) => globSync(p, { cwd: repoRoot })).length;
-  io.stdout(`${relativeOrSelf(io.cwd, repoRoot)}: project ${config.project}, ${rules} rule file(s), image ${config.stack.image}\n`);
+  io.stdout(`${relativeOrSelf(io.cwd, repoRoot)}: project ${config.project}, ${rules} rule file(s), ${additions.length} prompt addition(s), image ${config.stack.image}\n`);
   for (const note of notes) io.stdout(`  note: ${note}\n`);
   for (const problem of problems) io.stderr(`  problem: ${problem}\n`);
   io.stdout(problems.length === 0 ? 'ok\n' : '');

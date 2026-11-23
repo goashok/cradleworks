@@ -7,6 +7,7 @@ export type * from './ci.ts';
 export type * from './tracker.ts';
 export type * from './agent-events.ts';
 export type * from './agent-runtime.ts';
+export { AGENT_ROLES } from './agent-runtime.ts';
 export type * from './model-provider.ts';
 export type * from './sandbox.ts';
 export { parseAllowEntry } from './sandbox.ts';

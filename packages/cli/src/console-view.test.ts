@@ -84,6 +84,22 @@ describe('console views', () => {
     expect(taskCard(task({ state: 'verifying', evidence }), wi(), '')).not.toContain('<details class="evidence">');
   });
 
+  it("lists what each agent was given: the team's addition and the rules, with hashes", () => {
+    const h = (c: string) => `sha256:${c.repeat(64)}`;
+    const events = [
+      ev('run_context', { workItemId: 'wi_1', taskId: 'task_1', station: 'verify' }),
+      ev('context_pack_built', { role: 'reviewer', files: [{ path: '.factory/prompts/reviewer.md', bytes: 40, sha256: h('a'), kind: 'prompt' }, { path: '.factory/rules/style.md', bytes: 9, sha256: h('b'), kind: 'rule' }], dropped: ['.factory/rules/huge.md'], budgetBytes: 100 }),
+      ev('context_pack_built', { files: [{ path: '.factory/rules/old.md', bytes: 9 }], dropped: [], budgetBytes: 100 }),
+    ];
+    const html = runBody({ runId: 'run_1', events }, 'raw');
+    expect(html).toContain("Team's prompt addition for the reviewer: <code>.factory/prompts/reviewer.md</code>");
+    expect(html).toContain(`title="${h('a')}">aaaaaaaaaa</span>`);
+    expect(html).toContain('Project rules given to the reviewer: <code>.factory/rules/style.md</code>');
+    expect(html).toContain('Left out, over the context budget: <code>.factory/rules/huge.md</code>');
+    // Runs logged before roles and hashes were recorded still read.
+    expect(html).toContain('Project rules given to the agent: <code>.factory/rules/old.md</code></li>');
+  });
+
   it('shows a verify run as its verdict, each agent by its role, and agent text escaped', () => {
     const events = [
       ev('run_context', { workItemId: 'wi_1', taskId: 'task_1', station: 'verify' }),
