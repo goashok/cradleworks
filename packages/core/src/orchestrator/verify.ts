@@ -158,10 +158,7 @@ export const isUnreadableReview = (r: ReviewResult) => r.verdict === 'escalate' 
 export function parseReview(text: string | undefined, model: string): ReviewResult {
   const unreadable = (why: string): ReviewResult => ({ verdict: 'escalate', risk: 'high', reasons: [`${UNREADABLE}: ${why}.`], model });
   if (!text || text.trim() === '') return unreadable('it gave no final message');
-  const candidates = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]!);
-  const braces = lastJsonObject(text);
-  if (braces) candidates.push(braces);
-  for (const raw of candidates.reverse()) {
+  for (const raw of jsonCandidates(text)) {
     let value: unknown;
     try {
       value = JSON.parse(raw);
@@ -185,10 +182,7 @@ export function parseReview(text: string | undefined, model: string): ReviewResu
  */
 export function extractJson<T>(text: string | undefined, accept: (value: Record<string, unknown>) => T | undefined): T | undefined {
   if (!text) return undefined;
-  const candidates = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]!);
-  const braces = lastJsonObject(text);
-  if (braces) candidates.push(braces);
-  for (const raw of candidates.reverse()) {
+  for (const raw of jsonCandidates(text)) {
     try {
       const value: unknown = JSON.parse(raw);
       if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -202,15 +196,55 @@ export function extractJson<T>(text: string | undefined, accept: (value: Record<
   return undefined;
 }
 
-function lastJsonObject(text: string): string | undefined {
-  const end = text.lastIndexOf('}');
-  if (end < 0) return undefined;
-  let depth = 0;
-  for (let i = end; i >= 0; i--) {
-    if (text[i] === '}') depth++;
-    else if (text[i] === '{' && --depth === 0) return text.slice(i, end + 1);
+/** Fenced blocks and bare JSON objects in the text, last first. */
+function jsonCandidates(text: string): string[] {
+  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]!);
+  return [...fenced, ...jsonObjects(text)].reverse();
+}
+
+/**
+ * Every top-level {…} in the text that parses as JSON, in order. Braces inside JSON strings
+ * are skipped, so an answer that quotes code such as `{{#if x` still reads. A { in prose
+ * that never closes into valid JSON is passed over and the scan resumes after it.
+ */
+export function jsonObjects(text: string): string[] {
+  const out: string[] = [];
+  let i = text.indexOf('{');
+  while (i >= 0) {
+    const end = closingBrace(text, i);
+    const raw = end > 0 ? text.slice(i, end + 1) : undefined;
+    if (raw !== undefined && parses(raw)) {
+      out.push(raw);
+      i = text.indexOf('{', end + 1);
+    } else {
+      i = text.indexOf('{', i + 1);
+    }
   }
-  return undefined;
+  return out;
+}
+
+function closingBrace(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let j = start; j < text.length; j++) {
+    const c = text[j];
+    if (inString) {
+      if (c === '\\') j++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return j;
+  }
+  return -1;
+}
+
+function parses(raw: string): boolean {
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // --- verdict ------------------------------------------------------------------------
