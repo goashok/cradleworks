@@ -1,0 +1,16 @@
+{
+  "name": "@cradleworks/adapter-codex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentRuntime that runs the Codex CLI headless inside the task's sandbox",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@cradleworks/contracts": "workspace:*"
+  }
+}

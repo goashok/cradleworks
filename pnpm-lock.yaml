@@ -189,6 +189,16 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/adapter-codex:
+    dependencies:
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/adapter-github:
     dependencies:
       '@cradleworks/interfaces':
@@ -224,6 +234,9 @@ importers:
       '@cradleworks/adapter-claude-code':
         specifier: workspace:*
         version: link:../adapter-claude-code
+      '@cradleworks/adapter-codex':
+        specifier: workspace:*
+        version: link:../adapter-codex
       '@cradleworks/adapter-github':
         specifier: workspace:*
         version: link:../adapter-github

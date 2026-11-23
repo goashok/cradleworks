@@ -4,11 +4,13 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ClaudeCodeRuntime, resolveClaudeAuth } from '@cradleworks/adapter-claude-code';
+import { CodexRuntime, resolveCodexAuth } from '@cradleworks/adapter-codex';
 import { GitHubActionsCI, GitHubIssuesTracker, GitHubSourceControl, githubRepoRef } from '@cradleworks/adapter-github';
 import { baseUrlFrom, GitLabCI, GitLabIssuesTracker, GitLabSourceControl, gitlabRepoFromRemote } from '@cradleworks/adapter-gitlab';
 import { DockerSandbox } from '@cradleworks/adapter-local';
 import { LocalGitSourceControl, localRepoRef, ProcessSandbox } from '@cradleworks/contracts/fakes';
 import type { AgentRuntime, CI, RepoRef, Sandbox, SourceControl, Tracker } from '@cradleworks/interfaces';
+import { AgentsByName } from './agents.ts';
 
 export interface SourceControlEntry {
   create(): SourceControl;
@@ -59,7 +61,12 @@ export function defaultRegistry(): Registry {
       process: (home) => new ProcessSandbox(resolve(home, 'sandboxes')),
     },
     runtime: {
-      'cli-agent': ({ sandbox, env }) => new ClaudeCodeRuntime({ sandbox, auth: resolveClaudeAuth({ env }) }),
+      // runtime.agent (or runtime.roles.<role>.agent) picks the CLI agent per role.
+      'cli-agent': ({ sandbox, env }) =>
+        new AgentsByName({
+          'claude-code': () => new ClaudeCodeRuntime({ sandbox, auth: resolveClaudeAuth({ env }) }),
+          codex: () => new CodexRuntime({ sandbox, auth: resolveCodexAuth({ env }) }),
+        }),
     },
     ci: {
       'github-actions': { create: () => new GitHubActionsCI(), scm: ['github'] },

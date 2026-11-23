@@ -109,7 +109,7 @@ The core (`packages/core`) talks to the outside world only through interfaces
 | --- | --- | --- | --- |
 | `SourceControl` | clone, branch, commit, push, open/read/merge PRs | `github`, `gitlab`, `local-git` | Bitbucket |
 | `Sandbox` | create an isolated workspace, run commands, network policy, destroy | `local-docker` (`process` for tests only) | Docker Sandboxes (microVMs), AWS Fargate, Kubernetes |
-| `AgentRuntime` | start an agent, stream normalised events, stop, report usage | `cli-agent` (Claude Code) | OpenAI Codex CLI (M6), Agent SDK |
+| `AgentRuntime` | start an agent, stream normalised events, stop, report usage | `cli-agent` (Claude Code, Codex CLI; chosen per role) | Agent SDK |
 | `StateStore` | append events, query, snapshot | SQLite | Postgres |
 | `CI` | find runs for a commit, status, logs, artifacts | GitHub Actions, GitLab CI | |
 | `Tracker` | list and watch issues, comment, set status, check who may approve | `github-issues`, `gitlab-issues` | Jira, Linear |

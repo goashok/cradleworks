@@ -11,6 +11,7 @@ import type { AgentRuntime, CI, ItemRef, Tracker } from '@cradleworks/interfaces
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
+import { AgentsByName } from './agents.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
 export interface CliEnv {
@@ -910,6 +911,14 @@ async function openProject(io: CliEnv, dir: string = io.cwd): Promise<ProjectCon
   let runtime: AgentRuntime;
   try {
     runtime = makeRuntime({ sandbox, env: io.env });
+    // Set up every agent the config names now, so a missing credential is reported here,
+    // not part way through a run.
+    if (runtime instanceof AgentsByName) {
+      const agents = new Set([config.runtime.agent, ...Object.values(config.runtime.roles).flatMap((r) => (r?.agent ? [r.agent] : []))]);
+      for (const agent of agents) {
+        if (!runtime.runtimeFor(agent)) throw new Error(`no agent "${agent}" (known: ${runtime.agents.join(', ')})`);
+      }
+    }
   } catch (error) {
     throw new UsageError(`cannot set up runtime "${config.adapters.runtime}": ${(error as Error).message}`);
   }

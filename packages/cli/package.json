@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@cradleworks/adapter-claude-code": "workspace:*",
+    "@cradleworks/adapter-codex": "workspace:*",
     "@cradleworks/adapter-github": "workspace:*",
     "@cradleworks/adapter-gitlab": "workspace:*",
     "@cradleworks/adapter-local": "workspace:*",

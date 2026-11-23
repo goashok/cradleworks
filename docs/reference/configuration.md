@@ -31,9 +31,17 @@ effect in the milestone shown.
 
 | Key | Type | Status | Meaning |
 | --- | --- | --- | --- |
-| `agent` | string | ✅ | The agent to run. Today: `claude-code`. |
+| `agent` | string | ✅ | The agent to run: `claude-code`, or `codex` (the Codex CLI, with an OpenAI key in `OPENAI_API_KEY` or the Keychain item `cradleworks-openai-api-key`). See [Codex](#codex) for how it differs. |
 | `model` | string | ✅ | The model id passed to the agent, e.g. `claude-sonnet-5-5`. |
-| `roles.<role>.agent` / `.model` | string | ✅ | Override the agent or model for one role: `specifier` (Specify), `planner` (Plan), `implementer` (Build), `tester` (acceptance tests in Verify), and `reviewer` (Verify, and the ai spec and plan checks). |
+| `roles.<role>.agent` / `.model` | string | ✅ | Override the agent or model for one role: `specifier` (Specify), `planner` (Plan), `implementer` (Build), `tester` (acceptance tests in Verify), and `reviewer` (Verify, and the ai spec and plan checks). Roles can use different agents, e.g. Codex reviewing what Claude Code built. Every agent the config names is set up when a command starts, so a missing credential is reported then. |
+
+### Codex
+
+The `codex` agent runs `codex exec --json` in the sandbox, with Codex's own sandbox and approval prompts off because the factory's sandbox isolates it. It differs from `claude-code` in three ways:
+
+- **Spend is an estimate.** Codex reports tokens, not dollars, and only when the run ends. The factory prices the tokens from a built-in table. An unknown model is priced high on purpose, so caps trip early. A run over its spend cap ends `limit_reached` when it finishes. The wall-clock limit is what stops a long run part way.
+- **Refused commands stop the run.** Codex has no per-command deny list, so the factory checks each command as it starts. A refused one, such as `git push`, stops the run with a `denied` event. The sandbox holds no credentials to push with either way.
+- **The image needs the `codex` command** as well as the toolchain.
 
 ## `stack` (required)
 
