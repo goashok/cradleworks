@@ -220,6 +220,9 @@ function printProgress(io: CliEnv, p: Progress): void {
       if (o.outcome === 'pr_opened') {
         io.stdout(o.reworked ? `Pushed rework ${p.attempt - 1} to ${o.pr.url}\n  run    ${o.runId}\n` : `Opened ${o.pr.url}\n  branch ${o.branch}\n  run    ${o.runId}\n`);
         io.stdout('Verifying...\n');
+      } else if (o.outcome === 'tests_revised') {
+        io.stdout(`The implementer disputed an acceptance test; the tester agreed and revised it:\n${indent(o.reason)}\n  run ${o.runId}\n`);
+        io.stdout('Verifying...\n');
       } else if (o.outcome === 'paused') {
         io.stdout(`Paused: ${o.reason.replace(/^budget: /, '')}\n  run ${o.runId}\n`);
       } else if (o.outcome === 'declined' && o.reason.startsWith('paused:')) {

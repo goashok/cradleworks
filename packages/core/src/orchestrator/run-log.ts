@@ -30,6 +30,7 @@ export type RunLogEntry =
   | { type: 'acceptance_tests'; files: string[]; note?: string }
   | { type: 'budget_stopped'; reason: string }
   | { type: 'review_retried'; reason: string }
+  | { type: 'tests_reviewed'; verdict: 'revised' | 'upheld'; reasons: string[]; files: string[] }
   | { type: 'secrets_found'; findings: Array<{ file: string; line: number; kind: string }> }
   | { type: 'protected_paths_changed'; paths: string[] }
   | { type: 'command_denied'; tool: string; detail: string }

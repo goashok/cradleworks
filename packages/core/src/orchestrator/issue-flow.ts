@@ -26,6 +26,7 @@ export function specifierPrompt(contextFiles: string[]): string {
     'A good spec:',
     '- states the problem in the requester\'s terms, in two to five sentences',
     '- has acceptance criteria that are each observable and testable: inputs, outputs, status codes, messages, limits. Number them by order; write each as one sentence',
+    '- states a criterion about the whole repository (for example that nothing mentions an old version) without counting `.factory/`, where this spec is kept',
     '- keeps to what was asked; extra ideas go in "out of scope"',
     '- names every assumption you made where the request was silent',
     '',
@@ -257,12 +258,69 @@ export function testerPrompt(config: ProjectConfig, contextFiles: string[]): str
     '',
     `The project runs its tests with \`${config.stack.commands.test}\`. Put your tests in new files whose names contain "acceptance", next to the existing tests, so the test command picks them up. Do not edit existing files.`,
     'The tests are expected to fail now, because the feature is not built in this checkout. Make them compile against the interfaces the spec describes where you can, and test behaviour, not implementation details.',
+    'Assert only what the spec requires. Where it leaves a detail open (exact wording, formatting, order, extra fields, which of several valid approaches), accept any answer the spec allows; an implementer will rightly refuse to satisfy a test the spec does not support.',
+    'Run your tests once before you finish. They may fail only because the feature is missing (an unknown endpoint, function or type, or a failed assertion), never because of a mistake in the test code itself, such as a wrong type, import or call of the test library.',
+    'A test that searches the repository must leave out `.factory/`, where the factory keeps the spec itself.',
     'Do not implement the feature. Finish with a one-paragraph summary of what each test checks.',
   ].join('\n');
 }
 
 export function testerInput(spec: SpecDocument, task: { title: string; description?: string }): string {
   return [`# Task: ${task.title}`, '', task.description?.trim() || '_(no description)_', '', `# Spec: ${spec.title}`, '', specBody(spec)].join('\n');
+}
+
+/**
+ * The tester again, after the implementer refused to change the code to pass one of its tests.
+ * It now sees the branch, its own tests, the failure and the implementer's argument, and judges
+ * the test against the spec: fix the test, or keep it and say why.
+ */
+export function testReviewPrompt(config: ProjectConfig, contextFiles: string[]): string {
+  return [
+    'You are the tester agent in a software factory. You wrote acceptance tests for a task from its spec. The implementer built the task, one of your tests failed, and the implementer declined to change the code because it believes the test is wrong.',
+    'Decide who is right, judged only against the spec and the project rules, not against what is easiest to change.',
+    '',
+    'Project rule files:',
+    ...(contextFiles.length ? contextFiles.map((f) => `- ${f}`) : ['- (none)']),
+    '',
+    `Your tests are applied in this checkout, on top of the implementer's branch. Run them with \`${config.stack.commands.test}\`.`,
+    'The test is wrong when it does not compile or run as written, asserts something the spec does not require (an exact format, order, message or structure the spec leaves open), contradicts the spec, or depends on the environment. Then fix your test files so they check what the spec does require, and run them again. Edit only your own acceptance test files; never the implementation or other tests.',
+    'The test is right when the code does not do what the spec requires. Then leave the tests as they are.',
+    'End your final message with a JSON object: {"verdict": "revised" | "upheld", "reasons": ["..."]}. "revised" means you changed the tests; "upheld" means the code is wrong, with the spec requirement it misses.',
+  ].join('\n');
+}
+
+export function testReviewInput(spec: SpecDocument, task: { title: string; description?: string }, tests: { files: string[] }, failure: string, dispute: string): string {
+  return [
+    `# Task: ${task.title}`,
+    '',
+    task.description?.trim() || '_(no description)_',
+    '',
+    `# Your acceptance tests`,
+    '',
+    ...tests.files.map((f) => `- ${f}`),
+    '',
+    '# How they failed',
+    '',
+    '```',
+    failure.trim() || '(no output)',
+    '```',
+    '',
+    "# The implementer's reason for not changing the code",
+    '',
+    dispute.trim(),
+    '',
+    `# Spec: ${spec.title}`,
+    '',
+    specBody(spec),
+  ].join('\n');
+}
+
+export function parseTestReview(text: string | undefined): { verdict: 'revised' | 'upheld'; reasons: string[] } | undefined {
+  return extractJson(text, (v) => {
+    if (v.verdict !== 'revised' && v.verdict !== 'upheld') return undefined;
+    const reasons = Array.isArray(v.reasons) ? v.reasons.filter((r): r is string => typeof r === 'string' && r.trim() !== '').map((r) => r.trim()) : [];
+    return { verdict: v.verdict, reasons: reasons.length ? reasons : ['The tester gave no reason.'] };
+  });
 }
 
 // --- the issue: comments the factory posts, and commands people write ------------------

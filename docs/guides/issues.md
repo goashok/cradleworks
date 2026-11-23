@@ -204,6 +204,16 @@ project's `test` command runs as the `acceptance` check. If it fails, the task g
 rework, and the implementer sees the failing output and the tests themselves. If the tests don't
 apply to the branch, the check is marked skipped and the reviewer decides as usual.
 
+A test can be wrong too: it may not compile, or may ask for something the spec never said. The
+implementer won't bend sound code to such a test. If, on rework, it changes nothing and says why,
+the tester reviews its own test once. It sees the branch, the failure and the implementer's
+reason, and judges the test against the spec:
+
+- **revised**: it fixes the test, and Verify runs again with the new version.
+- **upheld**: the code misses the spec. The task escalates, and the reason gives both sides.
+
+`factory log <run>` shows the review as a `tests` line.
+
 Set `verify.tester: false` to leave it out. Hand-written tasks from `factory submit` have no spec,
 so there is nothing for the tester to work from.
 

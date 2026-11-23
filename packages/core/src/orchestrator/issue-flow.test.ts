@@ -338,6 +338,53 @@ describe('usage limits', () => {
   });
 });
 
+describe('disputed acceptance tests', () => {
+  // The tester asks for something the spec never said (CSV content); the implementer won't fake it.
+  const disputed = (review: 'revised' | 'upheld') =>
+    orchestrator({
+      tester: (req) => {
+        const export_ = req.input.includes('# Task: Write export');
+        if (req.rolePrompt.includes('declined to change the code')) {
+          if (review === 'upheld') return [json({ verdict: 'upheld', reasons: ['Criterion 1 needs the export to be CSV.'] })];
+          return [write('export.acceptance.sh', 'test -f export.txt\n'), json({ verdict: 'revised', reasons: ['The spec only asks that an export file exists; CSV content was my addition.'] })];
+        }
+        const file = Object.entries(FILE).find(([title]) => req.input.includes(`# Task: ${title}`))?.[1] ?? 'none.txt';
+        return [{ kind: 'message', text: 'Tests written.' }, write(`${file.replace('.txt', '')}.acceptance.sh`, export_ ? 'grep -q CSV export.txt\n' : `test -f ${file}\n`)];
+      },
+      implementer: (req) => {
+        const title = /^# (.*?)(?: \(rework \d+\))?$/m.exec(req.input)?.[1] ?? '';
+        const rework = req.input.includes('## Rework (attempt');
+        return [{ kind: 'message', text: rework ? 'I changed nothing: the failing acceptance test asks for CSV, which the spec never says.' : `Did ${title}.` }, write(FILE[title] ?? 'other.txt')];
+      },
+    });
+
+  const run = async (review: 'revised' | 'upheld') => {
+    const o = disputed(review);
+    const ref = issue();
+    const { workItemId } = await o.receiveItem(project, ref);
+    await o.runWorkItem(project, workItemId);
+    tracker.addComment(ref, 'sam', '/approve');
+    await o.runWorkItem(project, workItemId);
+    return (await o.getWorkItem(workItemId))!.tasks.find((t) => t.title === 'Write export')!;
+  };
+
+  it('lets the tester fix a test the spec does not support, then verifies again', async () => {
+    const task = await run('revised');
+    expect(task.state).toBe('merged');
+    expect(task.testDisputes).toBe(1);
+    expect(task.acceptanceTests?.patch).toContain('+test -f export.txt');
+    expect(task.evidence?.checks.find((c) => c.name === 'acceptance')?.outcome).toBe('passed');
+    expect(roles().filter((r) => r === 'tester')).toHaveLength(4);
+  });
+
+  it('escalates with both sides when the tester stands by its test', async () => {
+    const task = await run('upheld');
+    expect(task.state).toBe('escalated');
+    expect(task.lastReason).toContain('Implementer: I changed nothing');
+    expect(task.lastReason).toContain('Tester: Criterion 1 needs the export to be CSV.');
+  });
+});
+
 describe('issue flow parsing', () => {
   it('reads specs and questions, and refuses a second round of questions', () => {
     expect(parseSpecAnswer('```json\n{"questions":["a","b","c","d","e","f"]}\n```', true)).toEqual({ kind: 'questions', questions: ['a', 'b', 'c', 'd', 'e'] });

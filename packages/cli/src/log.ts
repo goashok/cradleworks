@@ -107,6 +107,8 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
       return line('evidence', `posted ${String(p.url)}`);
     case 'evidence_not_posted':
       return line('evidence', `not posted: ${String(p.error)}`);
+    case 'tests_reviewed':
+      return line('tests', `${String(p.verdict)}: ${oneLine((p.reasons as string[] | undefined)?.join(' ') ?? '', full)}`);
     case 'review_retried':
       return line('review', `run again: ${String(p.reason)}`);
     case 'task_declined':

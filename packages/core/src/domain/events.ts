@@ -57,6 +57,12 @@ export type WorkItemEvent =
   | (Base & { type: 'task_rework_started'; taskId: string })
   /** The tester agent wrote acceptance tests from the spec, once per task, before seeing the diff. */
   | (Base & { type: 'task_acceptance_tests_written'; taskId: string; runId: string; files: string[]; patch: string })
+  /**
+   * The implementer refused to change sound code to satisfy a failing acceptance test, and the
+   * tester reviewed its test against the spec: `revised` replaces the tests and verifies again,
+   * `upheld` escalates with both sides. Once per task.
+   */
+  | (Base & { type: 'task_tests_disputed'; taskId: string; runId: string; dispute: string; verdict: 'revised' | 'upheld'; reasons: string[]; files?: string[]; patch?: string })
   /** A build stopped without finishing (the factory was stopped); the task builds again. */
   | (Base & { type: 'task_interrupted'; taskId: string; reason: string })
   | (Base & { type: 'task_retry_granted'; taskId: string; grantedBy: string; extraLoops: number; note?: string })
@@ -91,6 +97,7 @@ export const WORK_ITEM_EVENT_TYPES: ReadonlySet<WorkItemEventType> = new Set<Wor
   'task_declined',
   'task_rework_started',
   'task_acceptance_tests_written',
+  'task_tests_disputed',
   'task_interrupted',
   'task_retry_granted',
   'task_merged',

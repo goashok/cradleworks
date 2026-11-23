@@ -185,6 +185,25 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       break;
     }
 
+    case 'task_tests_disputed': {
+      const task = findTask(wi, event.taskId, fail);
+      expectTaskState(task, ['building'], fail);
+      if (!task.acceptanceTests) fail(`task ${task.id} has no acceptance tests to dispute`);
+      if ((task.testDisputes ?? 0) >= 1) fail(`task ${task.id}'s acceptance tests were already reviewed once`);
+      task.testDisputes = (task.testDisputes ?? 0) + 1;
+      if (event.verdict === 'revised') {
+        const { files, patch } = event;
+        if (!files?.length || !patch) return fail('revised acceptance tests need files and a patch');
+        task.acceptanceTests = { runId: event.runId, files: [...files], patch };
+        task.state = 'verifying';
+        task.lastReason = `The tester revised its acceptance tests: ${event.reasons.join(' ')}`;
+      } else {
+        task.state = 'escalated';
+        task.lastReason = `The implementer disputed an acceptance test and the tester upheld it, so a person decides.\nImplementer: ${event.dispute}\nTester: ${event.reasons.join(' ')}`;
+      }
+      break;
+    }
+
     case 'task_interrupted': {
       const task = findTask(wi, event.taskId, fail);
       expectTaskState(task, ['building'], fail);

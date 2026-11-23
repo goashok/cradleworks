@@ -93,6 +93,8 @@ export interface Task {
   repo?: string;
   /** The tester agent's tests, written from the spec before it saw the diff. */
   acceptanceTests?: { runId: string; files: string[]; patch: string };
+  /** Times the implementer's dispute of the acceptance tests was reviewed: at most once. */
+  testDisputes?: number;
 }
 
 /** What Verify found for one commit of a task (Build spec, section 4). */

@@ -60,6 +60,9 @@ import {
   specifierPrompt,
   testerInput,
   testerPrompt,
+  parseTestReview,
+  testReviewInput,
+  testReviewPrompt,
   type PlanDraftTask,
 } from './issue-flow.ts';
 import { RunLog } from './run-log.ts';
@@ -125,7 +128,9 @@ export type BuildOutcome =
   | { outcome: 'declined'; reason: string; runId: string }
   | { outcome: 'failed'; reason: string; runId: string }
   /** Stopped by a spend cap; `factory budget extend` lets it build again. */
-  | { outcome: 'paused'; reason: string; runId: string };
+  | { outcome: 'paused'; reason: string; runId: string }
+  /** The implementer disputed an acceptance test and the tester fixed it; the task verifies again. */
+  | { outcome: 'tests_revised'; reason: string; runId: string };
 
 export type VerifyOutcome = { verdict: VerifyVerdict; reason: string; runId: string; evidence?: Evidence };
 
@@ -368,6 +373,19 @@ export class Orchestrator {
       } catch (error) {
         if (error instanceof AdapterError && error.code === 'invalid_input') {
           const reason = done?.summary?.trim() || 'the agent finished without changing any files';
+          // Sent back by an acceptance test it says is wrong: the tester reviews its test once,
+          // rather than a person being asked to referee.
+          const acceptance = task.evidence?.checks.find((c) => c.name === 'acceptance');
+          if (rework && spec && task.acceptanceTests && !task.testDisputes && acceptance && (acceptance.outcome === 'failed' || acceptance.outcome === 'timed_out')) {
+            step = 'test review';
+            const review = await this.#reviewAcceptanceTests(project, workItemId, task, spec, sandbox, reason, acceptance.outputTail ?? '', runId, log);
+            const latest = await this.#emit(wi.id, [
+              { type: 'task_tests_disputed', at: this.#clock(), taskId, runId: `${runId}-test-review`, dispute: reason, verdict: review.verdict, reasons: review.reasons, ...(review.tests ?? {}) },
+              { type: 'run_ended', at: this.#clock(), runId, outcome: 'succeeded' },
+            ]);
+            if (review.verdict === 'revised') return { outcome: 'tests_revised', reason: review.reasons.join(' '), runId };
+            return { outcome: 'declined', reason: findTask(latest, taskId).lastReason ?? reason, runId };
+          }
           await log.write({ type: 'task_declined', reason });
           await this.#emit(wi.id, [
             { type: 'task_declined', at: this.#clock(), taskId, reason },
@@ -1160,6 +1178,60 @@ export class Orchestrator {
         await this.#teardown(log, sandbox);
       }
     }
+  }
+
+  /**
+   * The tester judges its own failing test against the spec, on the implementer's branch with the
+   * tests applied. Only its acceptance test files are taken from the result.
+   */
+  async #reviewAcceptanceTests(
+    project: Project,
+    workItemId: string,
+    task: Task,
+    spec: SpecDocument,
+    sandbox: SandboxHandle,
+    dispute: string,
+    failure: string,
+    runId: string,
+    log: RunLog,
+  ): Promise<{ verdict: 'revised' | 'upheld'; reasons: string[]; tests?: { files: string[]; patch: string } }> {
+    const tests = task.acceptanceTests!;
+    const exec = (argv: string[], stdin?: string) => this.#deps.sandbox.exec(sandbox, argv, stdin === undefined ? {} : { stdin });
+    const applied = await exec(['git', 'apply', '--whitespace=nowarn', '-'], tests.patch);
+    if (applied.exitCode !== 0) return { verdict: 'upheld', reasons: [`The acceptance tests no longer apply to the branch, so they could not be reviewed: ${(applied.stderr || applied.stdout).trim().slice(0, 300)}`] };
+    const profile: AgentProfile = { role: 'tester', ...resolveAgent(project.config, 'tester') };
+    const pack = buildContextPack(sandbox.workspacePath, project.config.context.rules, this.#deps.contextBudgetBytes ?? DEFAULT_CONTEXT_BUDGET_BYTES);
+    const contextFiles = pack.files.map((f) => f.path);
+    const limits = { maxWallSeconds: this.#deps.stationWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
+    await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
+    const done = await this.#runAgent(log, {
+      runId: `${runId}-test-review`,
+      profile,
+      sandbox,
+      rolePrompt: testReviewPrompt(project.config, contextFiles),
+      input: testReviewInput(spec, task, tests, failure, dispute),
+      contextFiles,
+      tools: { allow: [], deny: [] },
+      limits,
+    }, { project, workItemId, taskId: task.id });
+    const verdict = done?.outcome === 'succeeded' ? parseTestReview(done.summary) : undefined;
+    let result: { verdict: 'revised' | 'upheld'; reasons: string[]; tests?: { files: string[]; patch: string } };
+    if (!verdict) {
+      result = { verdict: 'upheld', reasons: [`The tester's review ended without a verdict (${done?.outcome ?? 'no result'}${done?.error ? `: ${done.error}` : ''}).`] };
+    } else if (verdict.verdict === 'upheld') {
+      result = verdict;
+    } else {
+      // Its own tests are the untracked acceptance files; anything else it touched is dropped.
+      const untracked = await exec(['git', 'ls-files', '--others', '--exclude-standard']);
+      const files = untracked.stdout.split('\n').map((l) => l.trim()).filter((f) => f && /acceptance/i.test(f));
+      let patch = '';
+      for (const f of files) patch += (await exec(['git', 'diff', '--binary', '--no-index', '/dev/null', f])).stdout;
+      result = !files.length || patch === tests.patch
+        ? { verdict: 'upheld', reasons: [...verdict.reasons, 'The tester said it revised its tests but left them unchanged.'] }
+        : { verdict: 'revised', reasons: verdict.reasons, tests: { files, patch } };
+    }
+    await log.write({ type: 'tests_reviewed', verdict: result.verdict, reasons: result.reasons, files: result.tests?.files ?? [] });
+    return result;
   }
 
   async #specFor(task: { specId: string }): Promise<SpecDocument | undefined> {
