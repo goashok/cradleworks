@@ -97,6 +97,8 @@ describe('factory eval', () => {
     const c = await factory(['eval', 'compare', '--base', out('base-1'), '--base', out('base-2'), '--variant', out('shout')]);
     expect(c.stdout).toContain('Noise band: the factory as configured scored 1 of 1.');
     expect(c.stdout).toContain('Verdict: worse.');
+    expect(c.stdout).toContain('  base-1: 1 of 1 passed');
+    expect(c.stdout).not.toContain('too easy');
     expect(c.stdout).toContain('greet  2/2 as configured, 0/1 with the variant  ← worse');
 
     const one = compare([{ file: 'a', results: readResults(out('base-1')) }], [{ file: 'b', results: readResults(out('shout')) }]);

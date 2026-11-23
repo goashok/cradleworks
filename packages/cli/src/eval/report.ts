@@ -83,7 +83,7 @@ export function compare(base: Array<{ file: string; results: EvalResult[] }>, va
 const money = (n: number) => `$${n.toFixed(2)}`;
 
 export function formatSummary(s: RunSummary): string {
-  return `${s.file}: ${s.passed} of ${s.tasks} passed${s.variant ? ` (variant ${s.variant})` : ''}, ${money(s.costUsd)}, median ${s.medianMinutes} min per task${s.errors ? `, ${s.errors} could not run` : ''}`;
+  return `${s.label || s.file}: ${s.passed} of ${s.tasks} passed${s.variant ? ` (variant ${s.variant})` : ''}, ${money(s.costUsd)}, median ${s.medianMinutes} min per task${s.errors ? `, ${s.errors} could not run` : ''}`;
 }
 
 export function formatComparison(c: Comparison): string {
@@ -106,6 +106,10 @@ export function formatComparison(c: Comparison): string {
             ? "Verdict: within the noise. The variant's score is inside the band (or its runs disagree), so this says nothing either way. Keep the change only for another reason, or measure on more tasks."
             : 'Verdict: unknown. There are no variant runs.',
     );
+    const ceiling = c.band[0] === c.tasks.length && c.variant.every((s) => s.passed === c.tasks.length);
+    const floor = c.band[1] === 0 && c.variant.every((s) => s.passed === 0);
+    if (ceiling) lines.push('Every run passed every task: these tasks are too easy to tell the two apart. Add harder ones.');
+    if (floor) lines.push('No run passed any task: these tasks are too hard to tell the two apart, or the grading is broken (try factory eval check).');
     const bCost = c.base.reduce((a, s) => a + s.costUsd, 0) / Math.max(1, c.base.length);
     const vCost = c.variant.reduce((a, s) => a + s.costUsd, 0) / Math.max(1, c.variant.length);
     if (c.variant.length) lines.push(`Cost per run: ${money(bCost)} as configured, ${money(vCost)} with the variant.`);
