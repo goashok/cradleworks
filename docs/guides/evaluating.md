@@ -128,12 +128,60 @@ failed, and the failure was useful. The spec agent wasn't told about the related
 so it narrowed the spec to the service. It is told now. That's the kind of gap only a real run
 finds.
 
+## The learning loop: M5 (2026-11-23)
+
+**How much a run moves on its own.** The same factory (9b4ef0d), run three times on all 30 tasks
+in issue mode, scored 21, 21 and 19. Fourteen tasks passed every time, five never did, and eleven
+went either way. So a single run is only meaningful outside **19 to 21 of 30**, and one task
+changing is not a signal.
+
+**The full pipeline started below the M1 and M2 baselines.** Those runs handed each task straight
+to Build and scored 26 of 29. Going through an issue, a spec, a plan, a tester and gates scored
+lower, and the failure tags said why: the tester wrote wrong acceptance tests on five or six tasks
+a run, and the reviewer let through changes that broke an unstated requirement.
+
+**What moved it.** Each change got a small check on the tasks it targets, then a full run
+compared with the band, and was kept only if it helped:
+
+| Change | Full run | Kept |
+| --- | --- | --- |
+| Tester reviews a disputed acceptance test once and writes fewer wrong ones; the reviewer is rerun when its verdict is lost (9dda1df) | **25 / 30**, holdout 5 / 6; no wrong-test failures; six tasks newly passing, none newly failing | yes |
+| Agent answers are read even when a string holds a brace, e.g. a plan quoting `{{#if x` (444d1c1) | Smoke set: **5 / 8**, nothing flagged; the same 8 tasks scored 3 to 5 before. notifications-005, blocked in every earlier run, now merges and fails only its vulnerable-dependency check | yes |
+| Reviewer told to list every requirement, compare behaviour before and after, and check module dependencies (branch `reviewer-method`) | not run: the small check caught none of the three false accepts it targets | no |
+
+**What is left.** Three changes still merge while breaking a requirement no test in the project
+checks: a new dependency from billing to orders that makes the two depend on each other
+(orders-014), a field lost from error responses in a framework upgrade (orders-015), and a Node
+upgrade that leaves the sandbox image on the old version (notifications-014; when it does change
+the image, the change correctly waits for a person). A reviewer prompt has not fixed these;
+a check that the project can run, such as a dependency-cycle rule, is the likelier fix. One task, orders-012, stops
+because its spec added an edit to the project conventions nobody asked for; edits there always
+wait for a person.
+
+**What the pass rate can't see.** The grader asks only whether the hidden tests pass, so a
+reviewer that sends back a duplicated test or a churned lockfile earns nothing in the score. Each
+result now also records the merged change's hygiene: files changed only in whitespace, a lockfile
+changed when the reference solution changes none, and a duplicated test. Every merged change from
+the real reviewer in the three noise runs and the tester-fix run was clean; with the reviewer told
+to pass everything, notifications-005 merged a test file with two whole blocks copied verbatim,
+the same fault the real reviewer sent back on notifications-006.
+
+**Catching regressions.** `scripts/scheduled.ts` in the eval repository runs the smoke set, or the
+full suite, on a pinned checkout of a commit, and judges it against the history. A task is flagged when it passed at least two of its last three runs and fails
+twice now; a full run is flagged when it scores below the lowest of the last three. The exit check
+made two changes on purpose. A docs-only change was skipped, as it should be. A reviewer told to
+pass everything was **not** flagged, because the real reviewer misses the same broken changes, so
+there was nothing for the alarm to see. That is a finding about the reviewer, not the alarm, and
+the check is to be repeated once the reviewer catches those changes.
+
 ## Running it
 
 The eval tooling lives in the private eval repository: the grader, a script that submits each
 task's issue text and grades the branch, one that files tasks as issues for `factory watch`, and
-dated result files. The plan for M5 is to run the
-suite on every core change and block changes that lower the pass rate.
+dated result files, and the runner above. Run it by hand after changing the factory:
+`node scripts/scheduled.ts smoke --ref main --force` for the smoke set on that commit, or
+`node scripts/scheduled.ts weekly` for all 30. `scripts/schedule/install.sh` can run both on a
+schedule instead; it is not installed.
 
 If you build your own suite for your own projects, the shape above carries over: issue text the
 factory sees, hidden tests it doesn't, a reference solution that proves each task is solvable,

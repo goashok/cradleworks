@@ -1,6 +1,6 @@
 # Roadmap
 
-Each milestone ends with something that runs. M0 to M4 are done.
+Each milestone ends with something that runs. M0 to M4 are done; M5 is built, with one part of its exit check open.
 
 | | Milestone | Delivers | Exit check | Status |
 | --- | --- | --- | --- | --- |
@@ -9,7 +9,7 @@ Each milestone ends with something that runs. M0 to M4 are done.
 | M2 | Verify and gates | Verify station (build, tests, CI, reviewer agent), evidence bundle on the PR, the change gate, the rework loop | A task loops through rework and reaches the change gate with evidence | ✅ Done |
 | M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | ✅ Done |
 | M4 | Budgets and security | Per-user caps, a hard-deny list, scoped tokens, an evaluation of microVM sandboxes | Budget-stop and deny-list tests pass | ✅ Done |
-| M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | Next |
+| M5 | Eval and learning loop | The eval suite running on every core change, failure tagging, a weekly report | Changes that lower the pass rate are caught | ✅ Built. Exit check: a docs-only change is skipped; a weakened reviewer is not yet caught ([why](guides/evaluating.md)) |
 | M6 | Portability and console | A second agent runtime (OpenAI Codex CLI), a non-GitHub adapter, a local web console | The pass rate holds with no core change | |
 | M7 | Real-codebase validation | The factory on a real repository the team didn't build | Results compared with today's baseline | |
 
@@ -64,6 +64,22 @@ Each milestone ends with something that runs. M0 to M4 are done.
 - **Exit check:** on real issues with every gate set to `ai` and auto-merge on, a CI change was
   held for a person, a planted secret was stopped before the push, and a task over its budget
   paused while smaller ones merged. See also [MicroVM sandboxes](design/microvm-sandboxes.md).
+
+## What M5 added
+
+- **A measured noise band.** The same factory scores 19 to 21 of 30 from run to run, so only a
+  result outside that band means something.
+- **Failure tags, a report, and a regression rule** that judges a run against the earlier runs of
+  its own commit's history. `scripts/scheduled.ts` in the eval repository runs the smoke set or
+  the full suite on a pinned commit; it is run by hand after changing the factory.
+- **Hygiene**: what a merged change holds besides the fix (whitespace-only files, lockfile churn,
+  duplicated tests), which the pass rate can't see.
+- **Two fixes the loop found.** The tester writes fewer wrong acceptance tests (25 of 30, from
+  19 to 21), and agent answers that quote a brace are read instead of dropped.
+- **Exit check, partly met.** A weakened reviewer scored the same as the real one, because the
+  real one misses the same broken changes (a dependency cycle, a field lost in an upgrade). A
+  reviewer prompt change did not fix that; checks the project runs are the likelier fix. See
+  [Measure the factory](guides/evaluating.md).
 
 ## Open questions
 
