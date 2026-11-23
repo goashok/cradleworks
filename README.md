@@ -114,7 +114,8 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 - [Follow and replay runs](docs/guides/runs-and-logs.md): `status`, `log`, and where state lives
 - [Sandbox and credentials](docs/guides/security.md): what the agent can and cannot reach
 - [GitHub App tokens](docs/guides/github-app.md): short-lived, repo-scoped tokens instead of yours
-- [Measure the factory](docs/guides/evaluating.md): the eval suite and the first baseline
+- [Measure your own factory](docs/guides/measuring.md): an eval suite on your code, config variants, the noise band, `factory stats`
+- [How Cradleworks is measured](docs/guides/evaluating.md): its own eval suite and baselines
 - [Write an adapter](docs/guides/writing-an-adapter.md): plug in another SCM, sandbox or agent
 
 **Reference**

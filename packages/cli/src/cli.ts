@@ -13,6 +13,8 @@ import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
 import { checkRequirements, checkSkills, skillsCommand, type RequirementRunner } from './skills.ts';
 import { checkDrill, runDrill } from './drill.ts';
+import { evalCommand } from './eval/command.ts';
+import { computeStats, formatStats, type StatsItem } from './stats.ts';
 import { AgentsByName } from './agents.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
@@ -63,6 +65,15 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await review(rest, io);
       case 'drill':
         return await drillCommand(rest, io);
+      case 'eval':
+        return await evalCommand(rest, io, async (args, cwd, env) => {
+          let stdout = '';
+          let stderr = '';
+          const code = await run(args, { ...io, cwd, env, stdout: (t) => (stdout += t), stderr: (t) => (stderr += t) });
+          return { code, stdout, stderr };
+        });
+      case 'stats':
+        return await stats(rest, io);
       case 'skills': {
         const root = findProjectRoot(io.cwd);
         if (!root) throw new UsageError(`no .factory/factory.yaml in ${io.cwd} or any folder above it`);
@@ -125,6 +136,13 @@ const USAGE = `Usage:
                                     Hand the reviewer and each agent check the known-bad and
                                     known-good changes in .factory/drill/. Exits 0 when every
                                     one was judged right, 1 when one was missed, 3 inconclusive
+  factory eval run|check|report|compare ...
+                                    Measure the factory on a suite of tasks with hidden tests, as
+                                    configured or with a config variant, and compare the two
+                                    against the noise band. See docs/guides/measuring.md
+  factory stats [--days <n>] [--project <name>] [--json]
+                                    How the factory did on real work: gates, send-backs, rework,
+                                    agent checks, cost and time per merged change
   factory validate [<dir>]          Check a project's .factory/ setup without running anything
   factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <n>] | update <name> [--ref <ref>] | lock <name>
                                     Vendor agent skills into .factory/skills/ and pin them in
@@ -294,6 +312,29 @@ async function review(args: string[], io: CliEnv): Promise<number> {
     return outcome.review.verdict === 'pass' ? 0 : 1;
   } finally {
     await ctx.close();
+  }
+}
+
+async function stats(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { days: { type: 'string' }, project: { type: 'string' }, json: { type: 'boolean' } } });
+  if (positionals.length) throw new UsageError('stats takes no arguments: factory stats [--days <n>] [--project <name>] [--json]');
+  const days = values.days ? Number(values.days) : 30;
+  if (!Number.isFinite(days) || days <= 0) throw new UsageError('--days must be a positive number');
+  const store = new SqliteStateStore({ path: join(factoryHome(io), 'state.db') });
+  try {
+    const repo = new WorkItemRepository(store);
+    const items: StatsItem[] = [];
+    for (const e of await store.query({ types: ['work_item_received'] })) {
+      const wi = await repo.load(e.streamId);
+      if (!wi || (values.project && wi.projectId !== values.project)) continue;
+      items.push({ wi, events: await store.readStream(wi.id) });
+    }
+    const until = new Date();
+    const s = computeStats(items, new Date(until.getTime() - days * 86_400_000), until);
+    io.stdout(values.json ? `${JSON.stringify(s)}\n` : formatStats(s, values.project));
+    return 0;
+  } finally {
+    await store.close();
   }
 }
 

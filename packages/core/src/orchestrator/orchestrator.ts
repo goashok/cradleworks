@@ -560,6 +560,10 @@ export class Orchestrator {
         if (branchProtected.length) await log.write({ type: 'protected_paths_changed', paths: branchProtected });
       }
 
+      // Which factory config judges this: the .factory/ tree on the base branch, for stats over time.
+      const tree = await this.#deps.sandbox.exec(sandbox, ['git', 'rev-parse', `origin/${base}:.factory`]);
+      const factoryConfig = tree.exitCode === 0 && /^[0-9a-f]{7,64}$/.test(tree.stdout.trim()) ? tree.stdout.trim() : undefined;
+
       // CI runs on its own clock; wait for it while the checks and the review run here.
       const ciPromise = waitForCi(this.#deps.ci, project.repo, sha, { ...this.#deps.ciWait, signal: ciAbort.signal });
 
@@ -629,7 +633,7 @@ export class Orchestrator {
       await log.write({ type: 'ci_checked', ...ci });
 
       const { verdict, reason } = combine(checks, ci, review, agentChecks);
-      const evidence: Evidence = { runId, sha, checks, ci, ...(review ? { review } : {}), ...(agentChecks.length ? { agentChecks } : {}), verdict, reason, costUsd: cost, verifiedAt: this.#clock() };
+      const evidence: Evidence = { runId, sha, checks, ci, ...(review ? { review } : {}), ...(agentChecks.length ? { agentChecks } : {}), ...(factoryConfig ? { factoryConfig } : {}), verdict, reason, costUsd: cost, verifiedAt: this.#clock() };
       await log.write({ type: 'evidence', verdict, reason, sha });
       wi = await this.#emit(wi.id, [
         { type: 'task_evidence_recorded', at: this.#clock(), taskId, evidence },

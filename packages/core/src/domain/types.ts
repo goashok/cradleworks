@@ -106,6 +106,8 @@ export interface Evidence {
   checks: CheckResult[];
   ci: CiResult;
   review?: ReviewResult;
+  /** The git tree of `.factory/` on the base branch when it ran: which factory config judged it. */
+  factoryConfig?: string;
   /** The project's agent checks (`verify.agent_checks`), in config order. */
   agentChecks?: AgentCheckResult[];
   verdict: VerifyVerdict;

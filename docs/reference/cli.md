@@ -16,6 +16,11 @@ factory budget extend <id> [--usd <n>] [--no-run]
 factory budget extend --user <name> --usd <n> [--month]
 factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--check <name>] [--json]
 factory drill [--check <name>] [--base <branch>] [--json]
+factory eval run <suite> [<task> | @<set> ...] [--variant <file>] [--label <name>] [--out <file>] [--jobs <n>]
+factory eval check <suite> [<task> | @<set> ...]
+factory eval report <results.jsonl>...
+factory eval compare --base <results.jsonl>... --variant <results.jsonl>... [--json]
+factory stats [--days <n>] [--project <name>] [--json]
 factory validate [<dir>]
 factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <name>] | update <name> [--ref <ref>] | lock <name>
 factory log <run-id|work-item-id> [--full] [--json]
@@ -155,6 +160,26 @@ Nothing builds afterwards: `factory resume` reworks a task that was sent back.
 
 `--note` is recorded as the reason. Exit status: 0 passed, 1 sent back or escalated, 2 the task
 can't be verified now.
+
+## `factory eval`
+
+Measures the factory on a suite of tasks with hidden tests. See
+[Measure your own factory](../guides/measuring.md) for the suite format.
+
+| Command | Does |
+| --- | --- |
+| `run <suite> [<task> \| @<set> ...]` | For each task (all by default), runs `factory submit` on a scratch copy of the project at the task's base commit, with local git, no CI or tracker, and the change gate decided by the reviewer and merged. Then grades the merged result with the hidden tests, on this machine. Appends one JSON line per task to `--out` (default `<suite>/results/<date>-<label>.jsonl`) and skips tasks already there. `--variant <file>` applies a config variant first; `--label` names the run (default the variant's name, or `base`); `--jobs` runs tasks in parallel. Exit 0, or 3 when a task could not run |
+| `check <suite> [<task> ...]` | Checks the tasks: hidden tests fail at the base commit (or pass with `expect_base: pass`), pass with `solution.patch`, fail with each `wrong/*.patch`. Exit 0 when every case is as expected, 1 otherwise |
+| `report <results.jsonl>...` | Each file's score, cost and time, and each task's outcome |
+| `compare --base <file>... --variant <file>...` | Scores over the tasks every file has, the noise band (the range of the base scores; needs two or more), and a verdict: better or worse only when every variant run lands outside the band |
+
+## `factory stats`
+
+How the factory did on work received in the last `--days` days (default 30), from the event store:
+work items and tasks by outcome, first-time passes, rework rounds per merged task, Verify's
+verdicts, each gate's decisions, each agent check's catches, cost per merged task, the median time
+from request to merge, and Verify runs by the `.factory/` config they ran under. `--project`
+narrows it to one project; `--json` prints the numbers as one object.
 
 ## `factory drill`
 
