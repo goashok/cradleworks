@@ -31,10 +31,10 @@ import {
   type TrackerItem,
   type WorkingCopy,
 } from '@cradleworks/interfaces';
-import { resolveAgent, type ProjectConfig } from '../config/types.ts';
+import { resolveAgent, type AgentCheckConfig, type ProjectConfig } from '../config/types.ts';
 import type { WorkItemEvent } from '../domain/events.ts';
 import { newId, type IdKind } from '../domain/ids.ts';
-import { TERMINAL_WORK_ITEM_STATES, type CheckResult, type CiResult, type Evidence, type GateMode, type ReviewResult, type Station, type Task, type TaskState, type VerifyVerdict, type WorkItem, type WorkItemState } from '../domain/types.ts';
+import { TERMINAL_WORK_ITEM_STATES, type AgentCheckResult, type CheckResult, type CiResult, type Evidence, type GateMode, type ReviewResult, type Station, type Task, type TaskState, type VerifyVerdict, type WorkItem, type WorkItemState } from '../domain/types.ts';
 import { buildContextPack, DEFAULT_CONTEXT_BUDGET_BYTES, matchRules, promptAdditionPath, RULES_DIR, withAddition, type ContextPack, type PackSkill } from './context-pack.ts';
 import { parseLock, parseSkill, skillHash, skillsOpened, skillsPrompt, SKILLS_DIR, SKILLS_LOCK, type GivenSkill, type SkillFile } from './skills.ts';
 
@@ -54,7 +54,8 @@ function withContext(rolePrompt: string, ctx: GivenContext): string {
   const skills = skillsPrompt(ctx.given);
   return withAddition(skills ? `${rolePrompt}\n\n${skills}` : rolePrompt, ctx.addition);
 }
-import { implementerPrompt, reviewerPrompt } from './prompts.ts';
+import { agentCheckPrompt, implementerPrompt, reviewerPrompt } from './prompts.ts';
+import { advisoryReason } from './drill.ts';
 import {
   baseDirective,
   checkerPrompt,
@@ -558,6 +559,7 @@ export class Orchestrator {
       }
 
       let review: ReviewResult | undefined;
+      let agentChecks: AgentCheckResult[] = [];
       if (checksPassed) {
         step = 'review';
         const reviewed = await this.#runReviewer(project, log, runId, profile, sandbox, base, reviewInput(task, checks, spec), { project, workItemId, taskId });
@@ -571,6 +573,21 @@ export class Orchestrator {
           return { verdict: 'escalate', reason: reviewed.stop, runId };
         }
         review = reviewed.review;
+
+        if (project.config.verify.agentChecks?.length) {
+          step = 'agent checks';
+          const ran = await this.#runAgentChecks(project, log, runId, sandbox, base, reviewInput(task, checks, spec), { project, workItemId, taskId });
+          cost += ran.cost;
+          agentChecks = ran.results;
+          if (ran.stop) {
+            const latest = await this.#mustLoad(workItemId);
+            await this.#emit(workItemId, [
+              { type: 'task_budget_exceeded', at: this.#clock(), taskId, spentUsd: findTask(latest, taskId).spentUsd ?? 0, reason: ran.stop },
+              { type: 'run_ended', at: this.#clock(), runId, outcome: 'limit_reached' },
+            ]);
+            return { verdict: 'escalate', reason: ran.stop, runId };
+          }
+        }
       }
 
       step = 'ci';
@@ -583,8 +600,8 @@ export class Orchestrator {
       }
       await log.write({ type: 'ci_checked', ...ci });
 
-      const { verdict, reason } = combine(checks, ci, review);
-      const evidence: Evidence = { runId, sha, checks, ci, ...(review ? { review } : {}), verdict, reason, costUsd: cost, verifiedAt: this.#clock() };
+      const { verdict, reason } = combine(checks, ci, review, agentChecks);
+      const evidence: Evidence = { runId, sha, checks, ci, ...(review ? { review } : {}), ...(agentChecks.length ? { agentChecks } : {}), verdict, reason, costUsd: cost, verifiedAt: this.#clock() };
       await log.write({ type: 'evidence', verdict, reason, sha });
       wi = await this.#emit(wi.id, [
         { type: 'task_evidence_recorded', at: this.#clock(), taskId, evidence },
@@ -1085,19 +1102,23 @@ export class Orchestrator {
     base: string,
     input: string,
     charge: { project: Project; workItemId?: string; taskId?: string },
-  ): Promise<{ review: ReviewResult; stop?: undefined; cost: number } | { review?: undefined; stop: string; cost: number }> {
-    const pack = await this.#context(project, sandbox, 'reviewer', base, log);
+    check?: AgentCheckConfig,
+  ): Promise<{ review: ReviewResult; lost?: string; stop?: undefined; cost: number; tree: string[] } | { review?: undefined; stop: string; cost: number; tree: string[] }> {
+    const pack = await this.#context(project, sandbox, 'reviewer', base, log, check);
     const contextFiles = pack.readPaths;
-    const limits = { maxWallSeconds: this.#deps.reviewWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd };
+    const who = check ? `the ${check.name} check` : 'the reviewer';
+    const limits = { maxWallSeconds: this.#deps.reviewWallSeconds ?? 900, maxSpendUsd: project.config.budgets.perTaskUsd * (check?.maxShare ?? 1) };
+    const rolePrompt = check ? agentCheckPrompt(contextFiles, base, check.name, check.skill) : reviewerPrompt(project.config, contextFiles, base);
+    const agentRunId = (n: number) => `${runId}${check ? `-check-${check.name}` : ''}${n === 1 ? '' : '-review2'}`;
     let done: Extract<AgentEvent, { type: 'done' }> | undefined;
     let cost = 0;
     for (let reviewAttempt = 1; reviewAttempt <= 2; reviewAttempt++) {
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
       done = await this.#runAgent(log, {
-        runId: reviewAttempt === 1 ? runId : `${runId}-review2`,
+        runId: agentRunId(reviewAttempt),
         profile,
         sandbox,
-        rolePrompt: withContext(reviewerPrompt(project.config, contextFiles, base), pack),
+        rolePrompt: withContext(rolePrompt, pack),
         input: reviewAttempt === 1 ? input : `${input}\n\n${REVIEW_RETRY_NOTE}`,
         contextFiles,
         tools: { allow: [], deny: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] },
@@ -1107,19 +1128,74 @@ export class Orchestrator {
       const lost = done?.outcome === 'failed' && !(done.error && isBudgetStop(done.error));
       const unreadable = done?.outcome === 'succeeded' && isUnreadableReview(parseReview(done.summary, profile.model));
       if (reviewAttempt === 2 || !(lost || unreadable)) break;
-      await log.write({ type: 'review_retried', reason: unreadable ? 'the verdict could not be read' : `the run failed${done?.error ? `: ${done.error}` : ''}` });
+      await log.write({ type: 'review_retried', ...(check ? { check: check.name } : {}), reason: unreadable ? 'the verdict could not be read' : `the run failed${done?.error ? `: ${done.error}` : ''}` });
     }
     const stop = done?.error;
     if (stop && isBudgetStop(stop)) {
-      await log.write({ type: 'step_failed', step: 'review', error: stop });
-      return { stop, cost };
+      if (!check) await log.write({ type: 'step_failed', step: 'review', error: stop });
+      return { stop, cost, tree: pack.tree };
     }
-    const review: ReviewResult =
-      done?.outcome === 'succeeded'
-        ? parseReview(done.summary, profile.model)
-        : { verdict: 'escalate', risk: 'high', reasons: [`The reviewer run ended ${done?.outcome ?? 'without a result'}${done?.error ? `: ${done.error}` : ''}.`], model: profile.model };
-    await log.write({ type: 'review_decided', ...review });
-    return { review, cost };
+    const parsed = done?.outcome === 'succeeded' ? parseReview(done.summary, profile.model) : undefined;
+    const lost = !parsed
+      ? `${who} run ended ${done?.outcome ?? 'without a result'}${done?.error ? `: ${done.error}` : ''}`
+      : isUnreadableReview(parsed)
+        ? parsed.reasons[0]!.replace(/\.$/, '')
+        : undefined;
+    const review: ReviewResult = parsed ?? { verdict: 'escalate', risk: 'high', reasons: [`The reviewer run ended ${done?.outcome ?? 'without a result'}${done?.error ? `: ${done.error}` : ''}.`], model: profile.model };
+    if (!check) await log.write({ type: 'review_decided', ...review });
+    return { review, cost, tree: pack.tree, ...(lost ? { lost } : {}) };
+  }
+
+  /**
+   * The project's agent checks, one after another in the Verify sandbox, each a reviewer with one
+   * focus. A check that reaches its ceiling (`max_share` of the task's budget) couldn't check; a
+   * stop from the task's or requester's own caps ends Verify, as for the reviewer.
+   */
+  async #runAgentChecks(
+    project: Project,
+    log: RunLog,
+    runId: string,
+    sandbox: SandboxHandle,
+    base: string,
+    input: string,
+    charge: { project: Project; workItemId?: string; taskId?: string },
+    only?: string,
+  ): Promise<{ results: AgentCheckResult[]; cost: number; stop?: string }> {
+    const results: AgentCheckResult[] = [];
+    let cost = 0;
+    const reviewer = resolveAgent(project.config, 'reviewer');
+    for (const check of (project.config.verify.agentChecks ?? []).filter((c) => !only || c.name === only)) {
+      const profile: AgentProfile = { role: 'reviewer', agent: check.agent ?? reviewer.agent, model: check.model ?? reviewer.model };
+      const r = await this.#runReviewer(project, log, runId, profile, sandbox, base, input, charge, check);
+      cost += r.cost;
+      const advisory = advisoryReason(check, r.tree);
+      const base_ = { name: check.name, skill: check.skill, blocking: check.blocks && !advisory, ...(advisory ? { advisoryReason: advisory } : {}), model: profile.model, costUsd: r.cost };
+      let result: AgentCheckResult;
+      if (!r.review) {
+        const taskStop = await this.#budgetStop(charge);
+        if (taskStop) {
+          await log.write({ type: 'step_failed', step: `agent check ${check.name}`, error: taskStop });
+          return { results, cost, stop: taskStop };
+        }
+        const ceiling = project.config.budgets.perTaskUsd * check.maxShare;
+        result = { ...base_, verdict: 'escalate', risk: 'high', reasons: [], couldNotCheck: `it reached its ceiling of $${ceiling.toFixed(2)} (max_share ${check.maxShare} of the task's budget)` };
+      } else if (r.lost) {
+        result = { ...base_, verdict: 'escalate', risk: 'high', reasons: [], couldNotCheck: r.lost };
+      } else {
+        result = { ...base_, verdict: r.review.verdict, risk: r.review.risk, reasons: r.review.reasons };
+      }
+      await log.write({ type: 'agent_check_decided', ...result });
+      results.push(result);
+    }
+    return { results, cost };
+  }
+
+  /** Whether the task's or requester's caps now stop further runs. */
+  async #budgetStop(charge: { project: Project; workItemId?: string; taskId?: string }): Promise<string | undefined> {
+    if (!charge.workItemId) return undefined;
+    const wi = await this.#mustLoad(charge.workItemId);
+    const task = charge.taskId ? wi.tasks.find((t) => t.id === charge.taskId) : undefined;
+    return checkBudget(charge.project.config, task, await userSpend(this.#deps.store, wi.requester, this.#clock())).stop;
   }
 
   /**
@@ -1129,12 +1205,14 @@ export class Orchestrator {
    * per-task budget. For reviewing a change by hand, and for drills that hand the reviewer a
    * change known to be wrong.
    */
-  async reviewChange(project: Project, input: { title: string; description: string; patch: string; base?: string }): Promise<ReviewChangeOutcome> {
+  async reviewChange(project: Project, input: { title: string; description: string; patch: string; base?: string; check?: string }): Promise<ReviewChangeOutcome> {
+    const check = input.check ? project.config.verify.agentChecks?.find((c) => c.name === input.check) : undefined;
+    if (input.check && !check) return { runId: '', error: `no agent check "${input.check}" in verify.agent_checks`, cost: 0 };
     const base = input.base ?? project.baseBranch ?? 'main';
     const runId = this.#id('run');
     const log = new RunLog(this.#deps.store, runId, this.#clock);
     const profile: AgentProfile = { role: 'reviewer', ...resolveAgent(project.config, 'reviewer') };
-    await log.write({ type: 'run_context', station: 'review', title: input.title, base });
+    await log.write({ type: 'run_context', station: 'review', title: input.title, base, ...(check ? { check: check.name } : {}) });
     const checkoutDir = join(this.#deps.workRoot, 'review', shortId(runId));
     let sandbox: SandboxHandle | undefined;
     let step = 'clone';
@@ -1155,7 +1233,16 @@ export class Orchestrator {
       const sha = (await this.#deps.sourceControl.commit({ repo: project.repo, path: sandbox.workspacePath }, `${input.title}\n\nChange under review (run ${runId}).`)).sha;
       await log.write({ type: 'changes_committed', sha });
       step = 'review';
-      const reviewed = await this.#runReviewer(project, log, runId, profile, sandbox, base, reviewInput({ title: input.title, description: input.description }, []), { project });
+      const input_ = reviewInput({ title: input.title, description: input.description }, []);
+      if (check) {
+        const ran = await this.#runAgentChecks(project, log, runId, sandbox, base, input_, { project }, check.name);
+        const result = ran.results[0];
+        if (!result) return { runId, error: `the ${check.name} check did not run`, cost: ran.cost };
+        // A check that gave no verdict couldn't review: never a pass, never a send-back.
+        if (result.couldNotCheck) return { runId, error: `${check.name}: ${result.couldNotCheck}`, cost: ran.cost };
+        return { runId, review: { verdict: result.verdict, risk: result.risk, reasons: result.reasons, model: result.model }, cost: ran.cost };
+      }
+      const reviewed = await this.#runReviewer(project, log, runId, profile, sandbox, base, input_, { project });
       return reviewed.review ? { runId, review: reviewed.review, cost: reviewed.cost } : { runId, stop: reviewed.stop, cost: reviewed.cost };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1529,7 +1616,15 @@ export class Orchestrator {
    * the sandbox's reference folder, outside the checkout, and the agent is pointed there. Logged
    * with a hash per file.
    */
-  async #context(project: Project, sandbox: SandboxHandle, role: AgentRole, base: string, log: RunLog): Promise<GivenContext> {
+  async #context(
+    project: Project,
+    sandbox: SandboxHandle,
+    role: AgentRole,
+    base: string,
+    log: RunLog,
+    /** For an agent check: only its skill, whole, and none of the role's own skills or addition. */
+    check?: AgentCheckConfig,
+  ): Promise<GivenContext & { tree: string[] }> {
     const ref = `origin/${base}`;
     const git = (args: string[]) => this.#deps.sandbox.exec(sandbox, ['git', ...args]);
     const tree = await git(['ls-tree', '-r', '-z', '--name-only', ref]);
@@ -1541,10 +1636,10 @@ export class Orchestrator {
     }
     const additionPath = promptAdditionPath(role);
     const shown = await git(['show', `${ref}:${additionPath}`]);
-    const addition = shown.exitCode === 0 && shown.stdout.trim() ? { path: additionPath, text: shown.stdout } : undefined;
+    const addition = !check && shown.exitCode === 0 && shown.stdout.trim() ? { path: additionPath, text: shown.stdout } : undefined;
 
     // The role's skills, from the base branch's .factory/skills/, checked against the lock.
-    const roleConfig = project.config.runtime.roles[role] ?? {};
+    const roleConfig = check ? { alwaysSkills: [check.skill] } : (project.config.runtime.roles[role] ?? {});
     const wanted: Array<{ name: string; load: 'on-demand' | 'always' }> = [
       ...(roleConfig.alwaysSkills ?? []).map((name) => ({ name, load: 'always' as const })),
       ...(roleConfig.skills ?? []).filter((n) => !(roleConfig.alwaysSkills ?? []).includes(n)).map((name) => ({ name, load: 'on-demand' as const })),
@@ -1588,9 +1683,10 @@ export class Orchestrator {
         writeFileSync(target, file.content);
       }
     }
-    await log.write({ type: 'context_pack_built', role, base: ref, files: pack.files, dropped: pack.dropped, budgetBytes: pack.budgetBytes, ...(missing.length ? { skillsMissing: missing } : {}) });
+    await log.write({ type: 'context_pack_built', role, ...(check ? { check: check.name } : {}), base: ref, files: pack.files, dropped: pack.dropped, budgetBytes: pack.budgetBytes, ...(missing.length ? { skillsMissing: missing } : {}) });
     return {
       ...pack,
+      tree: entries,
       readPaths: pack.rules.map((r) => `${sandbox.contextSandboxPath}/${RULES_DIR}/${r.path}`),
       given: given.map((g) => g.given),
       opened: { root: skillsRoot, names: given.filter((g) => g.given.load === 'on-demand').map((g) => g.given.name) },

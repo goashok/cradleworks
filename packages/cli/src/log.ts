@@ -104,6 +104,12 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
       const head = `${String(p.verdict)}, ${String(p.risk)} risk (${String(p.model)})`;
       return line('review', full && reasons.length ? `${head}\n${reasons.map((r) => `- ${r}`).join('\n')}` : `${head}${reasons[0] ? `: ${oneLine(reasons[0], false)}` : ''}`);
     }
+    case 'agent_check_decided': {
+      const reasons = (p.reasons as string[] | undefined) ?? [];
+      const kind = p.blocking ? 'blocking' : 'advisory';
+      const head = p.couldNotCheck ? `${String(p.name)} (${kind}) couldn't check: ${String(p.couldNotCheck)}` : `${String(p.name)} (${kind}): ${String(p.verdict)}, ${String(p.risk)} risk (${String(p.model)})`;
+      return line('check', full && reasons.length ? `${head}\n${reasons.map((r) => `- ${r}`).join('\n')}` : `${head}${reasons[0] && !p.couldNotCheck ? `: ${oneLine(reasons[0], false)}` : ''}`);
+    }
     case 'ci_checked': {
       const runs = (p.runs as Array<{ state: string; url: string }> | undefined) ?? [];
       return line('ci', `${String(p.state)}${p.note ? ` (${String(p.note)})` : ''}${runs.length ? `: ${runs.map((r) => `${r.state} ${r.url}`).join(', ')}` : ''}`);

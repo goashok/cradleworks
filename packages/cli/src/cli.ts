@@ -12,6 +12,7 @@ import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { formatLog } from './log.ts';
 import { checkRequirements, checkSkills, skillsCommand, type RequirementRunner } from './skills.ts';
+import { checkDrill, runDrill } from './drill.ts';
 import { AgentsByName } from './agents.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
 
@@ -58,6 +59,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await consoleCommand(rest, io);
       case 'review':
         return await review(rest, io);
+      case 'drill':
+        return await drillCommand(rest, io);
       case 'skills': {
         const root = findProjectRoot(io.cwd);
         if (!root) throw new UsageError(`no .factory/factory.yaml in ${io.cwd} or any folder above it`);
@@ -109,10 +112,14 @@ const USAGE = `Usage:
                                     Raise a paused task's cap and carry on, or a requester's cap
   factory cancel <id> [--reason <text>]
                                     Cancel a work item
-  factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--json]
+  factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--check <name>] [--json]
                                     Have the reviewer judge a change the factory didn't build, as
                                     Verify's reviewer would; nothing is pushed or merged. Exits 0
                                     on pass, 1 on rework or escalate, 3 if it couldn't review
+  factory drill [--check <name>] [--base <branch>] [--json]
+                                    Hand the reviewer and each agent check the known-bad and
+                                    known-good changes in .factory/drill/. Exits 0 when every
+                                    one was judged right, 1 when one was missed, 3 inconclusive
   factory validate [<dir>]          Check a project's .factory/ setup without running anything
   factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <n>] | update <name> [--ref <ref>] | lock <name>
                                     Vendor agent skills into .factory/skills/ and pin them in
@@ -176,6 +183,9 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   const skills = checkSkills(repoRoot, config);
   problems.push(...skills.problems);
   notes.push(...skills.notes);
+  const drill = checkDrill(repoRoot, config);
+  problems.push(...drill.problems);
+  notes.push(...drill.notes);
 
   // Prompt additions: one file per role, added to that role's prompt once on the base branch.
   const additions = globSync('.factory/prompts/*.md', { cwd: repoRoot }).sort();
@@ -254,7 +264,7 @@ async function review(args: string[], io: CliEnv): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { title: { type: 'string' }, task: { type: 'string' }, base: { type: 'string' }, json: { type: 'boolean' } },
+    options: { title: { type: 'string' }, task: { type: 'string' }, base: { type: 'string' }, check: { type: 'string' }, json: { type: 'boolean' } },
   });
   const [patchPath] = positionals;
   if (!patchPath || positionals.length > 1) throw new UsageError('review takes exactly one patch file: factory review <change.patch> --title <text>');
@@ -269,7 +279,7 @@ async function review(args: string[], io: CliEnv): Promise<number> {
 
   const ctx = await openProject(io);
   try {
-    const outcome = await ctx.orchestrator.reviewChange(ctx.project, { title: values.title, description, patch, ...(values.base ? { base: values.base } : {}) });
+    const outcome = await ctx.orchestrator.reviewChange(ctx.project, { title: values.title, description, patch, ...(values.base ? { base: values.base } : {}), ...(values.check ? { check: values.check } : {}) });
     if (values.json) io.stdout(`${JSON.stringify(outcome)}\n`);
     else if (outcome.review) {
       const r = outcome.review;
@@ -277,6 +287,21 @@ async function review(args: string[], io: CliEnv): Promise<number> {
     } else io.stderr(`factory: could not review: ${outcome.stop ?? outcome.error} (run ${outcome.runId})\n`);
     if (!outcome.review) return 3;
     return outcome.review.verdict === 'pass' ? 0 : 1;
+  } finally {
+    await ctx.close();
+  }
+}
+
+async function drillCommand(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { check: { type: 'string' }, base: { type: 'string' }, json: { type: 'boolean' } } });
+  if (positionals.length) throw new UsageError('drill takes no arguments: factory drill [--check <name>] [--base <branch>] [--json]');
+  const ctx = await openProject(io);
+  try {
+    return await runDrill(ctx.repoRoot, ctx.project, (input) => ctx.orchestrator.reviewChange(ctx.project, input), io, {
+      ...(values.check ? { check: values.check } : {}),
+      ...(values.base ? { base: values.base } : {}),
+      json: values.json ?? false,
+    });
   } finally {
     await ctx.close();
   }
@@ -1011,7 +1036,7 @@ async function openProject(io: CliEnv, dir: string = io.cwd): Promise<ProjectCon
     // Set up every agent the config names now, so a missing credential is reported here,
     // not part way through a run.
     if (runtime instanceof AgentsByName) {
-      const agents = new Set([config.runtime.agent, ...Object.values(config.runtime.roles).flatMap((r) => (r?.agent ? [r.agent] : []))]);
+      const agents = new Set([config.runtime.agent, ...Object.values(config.runtime.roles).flatMap((r) => (r?.agent ? [r.agent] : [])), ...(config.verify.agentChecks ?? []).flatMap((c) => (c.agent ? [c.agent] : []))]);
       for (const agent of agents) {
         if (!runtime.runtimeFor(agent)) throw new Error(`no agent "${agent}" (known: ${runtime.agents.join(', ')})`);
       }

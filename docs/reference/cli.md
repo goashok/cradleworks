@@ -13,7 +13,8 @@ factory cancel <id> [--reason <text>]
 factory budget [<user>]
 factory budget extend <id> [--usd <n>] [--no-run]
 factory budget extend --user <name> --usd <n> [--month]
-factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--json]
+factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>] [--check <name>] [--json]
+factory drill [--check <name>] [--base <branch>] [--json]
 factory validate [<dir>]
 factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <name>] | update <name> [--ref <ref>] | lock <name>
 factory log <run-id|work-item-id> [--full] [--json]
@@ -140,6 +141,24 @@ work item of the project. It doesn't start any runs.
 
 Cancels the work item. Its pull requests stay open. `--reason` is stored.
 
+## `factory drill`
+
+Hands each agent check (`verify.agent_checks`) its known-bad changes from
+`.factory/drill/<check>/` and every known-good one from `.factory/drill/controls/`, and the
+reviewer its own from `.factory/drill/reviewer/` when there are any. Each case is a `.patch`
+with a `.md` of the task beside it. A known-bad case passed once runs again, and is missed only
+if it passes both times; `known-misses.txt` lists cases reported but not counted.
+
+| Flag | Does |
+| --- | --- |
+| `--check <name>` | Only that check, or `reviewer` |
+| `--base <branch>` | Apply the cases to, and read the checks' skills and rules from, that branch (default the project's base) |
+| `--json` | One JSON object: `code`, `flagged`, each case's verdicts, reason, cost and runs |
+
+Exit status: 0 every case judged right, 1 flagged (a missed known-bad case, or more than half the
+controls sent back by one check), 2 bad usage or no cases, 3 inconclusive (a run gave no verdict).
+See [Drill your checks](../guides/verify-and-approve.md#drill-your-checks).
+
 ## `factory review <change.patch>`
 
 Has the reviewer judge a change the factory didn't build: the patch is applied to `--base` (the
@@ -151,6 +170,9 @@ JSON object with `review`, `cost` and `runId`. `factory log <runId>` replays it.
 
 Use it to review a branch by hand (`git diff main...feature > change.patch`), or to check the
 reviewer itself: the eval suite's reviewer drill hands it changes known to be wrong.
+
+With `--check <name>`, one of the project's agent checks judges it instead, as in Verify; its
+spend is capped at its `max_share` of the per-task budget, and a check that gives no verdict exits 3.
 
 ## `factory budget`
 
@@ -210,6 +232,7 @@ It reports:
 - `context.rules` patterns that match no file
 - `context.include` paths that don't exist
 - prompt additions (`.factory/prompts/*.md`) not named for a role, and empty ones (a note)
+- agent checks and drill cases: a `.factory/drill/` folder that isn't `reviewer`, `controls` or a check's name is a problem; a blocking check without known-bad cases (it runs advisory), a case without its `.md`, and a known miss that names no case are notes
 - skills: a folder without a valid `SKILL.md`, one not in `.factory/skills.lock` or changed since it was locked, a lock entry with no folder, and a role naming a skill that isn't there; a vendored skill no role uses is a note
 - a skill's requirements: each command recorded with `factory skills require` (or guessed by `add`) for a skill a role uses is run in a throwaway container of `stack.image`, with no network; one that fails is a problem. When the image isn't built yet, it's a note instead
 - whether `stack.image` has been built on this machine (a note, not an error)

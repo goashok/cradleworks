@@ -106,6 +106,8 @@ export interface Evidence {
   checks: CheckResult[];
   ci: CiResult;
   review?: ReviewResult;
+  /** The project's agent checks (`verify.agent_checks`), in config order. */
+  agentChecks?: AgentCheckResult[];
   verdict: VerifyVerdict;
   /** One line, for status and the event log. */
   reason: string;
@@ -141,6 +143,19 @@ export interface ReviewResult {
   risk: 'low' | 'medium' | 'high';
   reasons: string[];
   model: string;
+}
+
+/** One agent check's verdict: a reviewer with one focus, given a skill. */
+export interface AgentCheckResult extends ReviewResult {
+  name: string;
+  skill: string;
+  /** Whether its verdict counted toward Verify's; otherwise it was only reported. */
+  blocking: boolean;
+  /** Why a check set to block ran as advisory, e.g. it has no known-bad drill cases. */
+  advisoryReason?: string;
+  /** Set when it gave no verdict: its run failed, its verdict couldn't be read, or it reached its ceiling. */
+  couldNotCheck?: string;
+  costUsd: number;
 }
 
 export type RunOutcome = 'succeeded' | 'failed' | 'stopped' | 'timed_out' | 'limit_reached';

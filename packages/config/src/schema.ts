@@ -8,7 +8,7 @@ export type Path = ReadonlyArray<string | number>;
 export type Field =
   | { kind: 'string'; required?: boolean; doc?: string }
   | { kind: 'enum'; values: readonly string[]; required?: boolean }
-  | { kind: 'number'; required?: boolean; min?: number; integer?: boolean; exclusiveMin?: boolean }
+  | { kind: 'number'; required?: boolean; min?: number; max?: number; integer?: boolean; exclusiveMin?: boolean }
   | { kind: 'boolean'; required?: boolean }
   /** A string or a list of strings; normalised to a list. */
   | { kind: 'stringList'; required?: boolean; check?: (item: string) => string | undefined }
@@ -122,7 +122,24 @@ export const FACTORY_YAML: Field = {
     verify: {
       kind: 'object',
       required: true,
-      fields: { tester: { kind: 'boolean', required: true } },
+      fields: {
+        tester: { kind: 'boolean', required: true },
+        /** Further reviewers with one focus each, keyed by name. */
+        agent_checks: {
+          kind: 'object',
+          fields: {},
+          extra: {
+            kind: 'object',
+            fields: {
+              skill: { kind: 'string', required: true },
+              blocks: { kind: 'boolean' },
+              max_share: { kind: 'number', min: 0, exclusiveMin: true, max: 1 },
+              agent: { kind: 'string' },
+              model: { kind: 'string' },
+            },
+          },
+        },
+      },
     },
     related_repos: { kind: 'stringList', required: true },
     protected_paths: { kind: 'stringList', required: true },
@@ -189,6 +206,7 @@ export function validate(value: unknown, field: Field, path: Path = [], issues: 
           issues.push({ path, message: `${where} must be ${bound} (got ${value})` });
         }
       }
+      if (field.max !== undefined && value > field.max) issues.push({ path, message: `${where} must be at most ${field.max} (got ${value})` });
       break;
     }
 

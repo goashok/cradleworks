@@ -54,3 +54,30 @@ export function reviewerPrompt(config: ProjectConfig, contextFiles: string[], ba
     '{"verdict": "pass" | "rework" | "escalate", "risk": "low" | "medium" | "high", "reasons": ["…"]}',
   ].join('\n');
 }
+
+/**
+ * A reviewer with one focus (an agent check in Verify). Its skill, put into the prompt after this,
+ * says what to check; the verdict format is the reviewer's, so it is read the same way.
+ */
+export function agentCheckPrompt(contextFiles: string[], baseBranch: string, name: string, skill: string): string {
+  const rules = contextFiles.length > 0 ? contextFiles.map((f) => `- ${f}`).join('\n') : '- (none)';
+  return [
+    `You are the "${name}" check in a software factory's Verify station. Another agent implemented a task on the branch checked out here, and a separate reviewer judges the change as a whole.`,
+    `You judge one thing only: what the team's skill "${skill}", below, asks you to check. Leave everything else to the reviewer.`,
+    '',
+    'The project rule files, for context:',
+    rules,
+    '',
+    `See the change with \`git diff origin/${baseBranch}...HEAD\` and \`git log origin/${baseBranch}..HEAD\`. Read any file you need, and run read-only commands the skill asks for.`,
+    'Do not change files: your job is to judge, not to fix.',
+    '',
+    'Verdicts:',
+    '- "pass": nothing the skill covers is wrong in this change, including when the change does not touch it.',
+    '- "rework": concrete problems the skill covers that the implementer can fix. Every reason must say what is wrong and where.',
+    '- "escalate": a human must decide (it is risky in a way the skill covers but the task does not settle, or it cannot be judged).',
+    'Rate risk "low", "medium" or "high" for what could break, within your focus, if this merged.',
+    '',
+    'End your final message with exactly one JSON object and nothing after it:',
+    '{"verdict": "pass" | "rework" | "escalate", "risk": "low" | "medium" | "high", "reasons": ["…"]}',
+  ].join('\n');
+}

@@ -29,6 +29,8 @@ it checks is exactly what's on the branch, built from a clean checkout. It runs 
    results, and judges the change. It may not edit files. It answers **pass**, **rework** (with
    concrete reasons) or **escalate**, plus a risk rating. It runs only when the checks pass,
    because there's no point reviewing a change that doesn't build.
+4. **Agent checks**, if the project has any (see [Agent checks](#agent-checks)): further
+   reviewers with one focus each, run after the reviewer on the same sandbox.
 
 The verdict follows from those steps in this order:
 
@@ -39,6 +41,8 @@ The verdict follows from those steps in this order:
 | CI still running after 20 minutes, or CI unreadable | escalate |
 | The reviewer says rework or escalate | the same, with its reasons |
 | The reviewer passes the change but rates it **high** risk | escalate |
+| The reviewer or a blocking agent check escalates, or a blocking check couldn't check | escalate |
+| The reviewer or a blocking agent check says rework | rework, with every one's reasons |
 | The reviewer's answer can't be read | escalate (never pass) |
 | Everything passes | pass |
 
@@ -126,6 +130,80 @@ factory cancel <work-item-id> --reason "Not needed"
 
 The `--note` reaches the agent as feedback. `retry` continues the task straight away. Add
 `--no-run` to only record it.
+
+## Agent checks
+
+Some things you want checked aren't "is this change right?" but "did it get one thing right?":
+a security audit, an accessibility pass, migration safety. A command in `stack` checks what a
+machine can. An **agent check** is a further reviewer with one focus, given a
+[skill](add-a-project.md#skills) that says what to look for, whose verdict counts as one of
+Verify's checks:
+
+```yaml
+verify:
+  agent_checks:
+    security:
+      skill: security-review    # in .factory/skills/; vendor it with factory skills add
+      blocks: true              # its rework sends the change back; false = only reported
+      max_share: 0.25           # of budgets.per_task_usd, per Verify run (the default)
+      model: claude-opus-5-5    # optional; agent: too. Default: the reviewer's
+```
+
+Each check runs after the reviewer, on the same checkout and with the same input (task, spec,
+check results), read-only. It gets the project rules and its skill whole, not the reviewer's own
+skills or prompt addition, and answers in the reviewer's format. Checks run one after another,
+in file order.
+
+| The check says | Blocking | Advisory |
+| --- | --- | --- |
+| pass | counts as passed | reported |
+| rework | sends the change back; its reasons go to the implementer under its name | reported on the PR and in the evidence |
+| escalate, or couldn't check | the task escalates to a person | reported |
+
+"Couldn't check" means its run failed, its verdict couldn't be read twice, or it reached its
+`max_share` ceiling. It never counts as a pass. Rework from a check counts toward
+`max_rework_loops` like any other. A check's spend comes out of the task's `per_task_usd`, so a
+task never costs more than its cap however many checks you add; `max_share` keeps one slow
+check from using what rework needs.
+
+**A blocking check must show it can block.** A weakened check doesn't make the pass rate drop;
+it just stops catching things. So a check set to `blocks: true` runs as advisory until
+`.factory/drill/<check>/` has at least one known-bad case, and `factory validate` says so. See
+[Drill your checks](#drill-your-checks).
+
+## Drill your checks
+
+Drill cases are changes whose verdict you know, kept in the repository:
+
+```text
+.factory/drill/
+  security/
+    sql-injection.patch     # known-bad: the security check must send it back
+    sql-injection.md        # the task the change claims to do; the first line is its title
+  reviewer/                 # optional: known-bad changes for the reviewer itself
+  controls/
+    add-endpoint.patch      # known-good: every check must pass it
+    add-endpoint.md
+  known-misses.txt          # "security/some-case  why": reported, not counted
+```
+
+Make a patch with `git diff` against your base branch, from a branch where you made the change.
+
+`factory drill` hands each agent check its known-bad cases and every control, through
+`factory review` (in a fresh sandbox, applied to the base branch, nothing pushed). The reviewer
+joins when it has cases of its own; `--check <name>` drills one (or `reviewer`). The checks use
+the skills and rules on the base branch, so to drill a skill change before merging it, pass
+`--base <its branch>` after pushing it. The cases themselves are read from your checkout.
+
+A known-bad case counts as missed only if the check passed it every time: a pass gets one
+confirmation run, because one pass from a noisy judge says little. The drill **flags** a check
+that missed a case, or sent back more than half the controls. A run that gives no verdict makes
+the drill **inconclusive**, never a pass. Exit status: 0 every case judged right, 1 flagged,
+2 bad usage or no cases, 3 inconclusive.
+
+Run it when a check's skill, its model, or the rules change, since that's when a check can
+quietly weaken. It costs a few cents per case. `factory review <patch> --title <text> --check
+<name>` runs one check on one change.
 
 ## Choosing the reviewer's model
 

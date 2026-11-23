@@ -4,7 +4,7 @@
 
 import type { CI, CIRunRef, CIRunStatus, RepoRef, Sandbox, SandboxHandle } from '@cradleworks/interfaces';
 import type { ProjectConfig } from '../config/types.ts';
-import type { CheckResult, CiResult, Evidence, ReviewResult, VerifyVerdict } from '../domain/types.ts';
+import type { AgentCheckResult, CheckResult, CiResult, Evidence, ReviewResult, VerifyVerdict } from '../domain/types.ts';
 
 export const OUTPUT_TAIL_LINES = 60;
 const MAX_TAIL_CHARS = 6000;
@@ -249,8 +249,12 @@ function parses(raw: string): boolean {
 
 // --- verdict ------------------------------------------------------------------------
 
-/** Checks and CI decide first; the reviewer decides only a change that builds and passes. */
-export function combine(checks: CheckResult[], ci: CiResult, review: ReviewResult | undefined): { verdict: VerifyVerdict; reason: string } {
+/**
+ * Checks and CI decide first; the reviewer and the blocking agent checks decide only a change
+ * that builds and passes. Among those, an escalation wins over rework (a person decides either
+ * way), and rework over a pass. Advisory agent checks never change the verdict.
+ */
+export function combine(checks: CheckResult[], ci: CiResult, review: ReviewResult | undefined, agentChecks: AgentCheckResult[] = []): { verdict: VerifyVerdict; reason: string } {
   const failedChecks = checks.filter((c) => c.outcome === 'failed' || c.outcome === 'timed_out');
   if (failedChecks.length > 0) return { verdict: 'rework', reason: `check${failedChecks.length > 1 ? 's' : ''} failed: ${failedChecks.map((c) => c.name).join(', ')}` };
   if (ci.state === 'failed') {
@@ -260,9 +264,17 @@ export function combine(checks: CheckResult[], ci: CiResult, review: ReviewResul
   if (ci.state === 'timed_out' || ci.state === 'error') return { verdict: 'escalate', reason: ci.note ?? `CI ${ci.state}` };
   if (!review) return { verdict: 'escalate', reason: 'the reviewer did not run' };
   if (review.verdict === 'pass' && review.risk === 'high') return { verdict: 'escalate', reason: 'the reviewer passed the change but rated it high risk' };
-  const first = review.reasons[0];
-  if (review.verdict === 'pass') return { verdict: 'pass', reason: `checks passed, CI ${ciWord(ci)}, reviewer passed (${review.risk} risk)` };
-  return { verdict: review.verdict, reason: `reviewer: ${first ?? review.verdict}` };
+  const counted = agentChecks.filter((c) => c.blocking);
+  const votes = [
+    { who: 'reviewer', verdict: review.verdict, first: review.reasons[0] },
+    ...counted.map((c) => ({ who: `${c.name} check`, verdict: c.verdict, first: c.couldNotCheck ? `couldn't check: ${c.couldNotCheck}` : c.reasons[0] })),
+  ];
+  for (const verdict of ['escalate', 'rework'] as const) {
+    const vote = votes.find((v) => v.verdict === verdict);
+    if (vote) return { verdict, reason: `${vote.who}: ${vote.first ?? verdict}` };
+  }
+  const passed = counted.length ? `, agent check${counted.length > 1 ? 's' : ''} ${counted.map((c) => c.name).join(', ')} passed` : '';
+  return { verdict: 'pass', reason: `checks passed, CI ${ciWord(ci)}, reviewer passed (${review.risk} risk)${passed}` };
 }
 
 function ciWord(ci: CiResult): string {
@@ -292,6 +304,9 @@ export function reworkFeedback(evidence: Evidence | undefined, gateReason: strin
     }
     if (evidence.ci.state === 'failed') parts.push('', '### CI failed', '```text', evidence.ci.failureLogs ?? '(no log)', '```');
     if (evidence.review && evidence.review.verdict !== 'pass') parts.push('', '### Reviewer', ...evidence.review.reasons.map((r) => `- ${r}`));
+    for (const c of evidence.agentChecks ?? []) {
+      if (c.blocking && c.verdict === 'rework' && !c.couldNotCheck) parts.push('', `### Agent check \`${c.name}\``, ...c.reasons.map((r) => `- ${r}`));
+    }
   }
   return parts.join('\n');
 }
@@ -312,6 +327,12 @@ export function evidenceMarkdown(evidence: Evidence, attempt: number): string {
   if (evidence.review) {
     const r = evidence.review;
     lines.push('', `### Reviewer (${r.model}): ${r.verdict}, ${r.risk} risk`, ...(r.reasons.length ? r.reasons.map((x) => `- ${x}`) : ['- No concerns.']));
+  }
+  for (const c of evidence.agentChecks ?? []) {
+    const kind = c.blocking ? 'blocking' : `advisory${c.advisoryReason ? `: ${c.advisoryReason}` : ''}`;
+    const head = c.couldNotCheck ? "couldn't check" : `${c.verdict}, ${c.risk} risk`;
+    const body = c.couldNotCheck ? [`- ${c.couldNotCheck}`] : c.reasons.length ? c.reasons.map((x) => `- ${x}`) : ['- No concerns.'];
+    lines.push('', `### Agent check \`${c.name}\` (${kind}; ${c.model}, $${c.costUsd.toFixed(4)}): ${head}`, ...body);
   }
   for (const c of evidence.checks.filter((c) => c.outcome === 'failed' || c.outcome === 'timed_out')) {
     lines.push('', `<details><summary>${c.name} output</summary>`, '', '```text', c.outputTail ?? '', '```', '</details>');

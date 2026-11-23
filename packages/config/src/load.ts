@@ -164,11 +164,14 @@ interface RawConfig {
   budgets: { per_task_usd: number; per_user_daily_usd?: number; per_user_monthly_usd?: number; max_rework_loops: number };
   specs: 'repo' | 'factory';
   concurrency: number;
-  verify: { tester: boolean };
+  verify: { tester: boolean; agent_checks?: Record<string, { skill: string; blocks?: boolean; max_share?: number; agent?: string; model?: string }> };
   related_repos: string | string[];
   protected_paths: string | string[];
   sandbox: { network: { mode: 'none' | 'allowlist'; allow: string | string[] }; commands: { deny: string | string[] } };
 }
+
+/** Of the task's budget, per Verify, when a check doesn't say. */
+const DEFAULT_CHECK_SHARE = 0.25;
 
 const list = (v: string | string[]): string[] => (typeof v === 'string' ? [v] : [...v]);
 const gate = (v: RawGate): GateMode => (v === 'skip' ? 'skipped' : v);
@@ -210,7 +213,17 @@ function toProjectConfig(raw: RawConfig): ProjectConfig {
     budgets,
     specs: raw.specs,
     concurrency: raw.concurrency,
-    verify: { tester: raw.verify.tester },
+    verify: {
+      tester: raw.verify.tester,
+      agentChecks: Object.entries(raw.verify.agent_checks ?? {}).map(([name, c]) => ({
+        name,
+        skill: c.skill,
+        blocks: c.blocks ?? false,
+        maxShare: c.max_share ?? DEFAULT_CHECK_SHARE,
+        ...(c.agent !== undefined ? { agent: c.agent } : {}),
+        ...(c.model !== undefined ? { model: c.model } : {}),
+      })),
+    },
     relatedRepos: list(raw.related_repos),
     protectedPaths: list(raw.protected_paths),
     commands: { deny: list(raw.sandbox.commands.deny) },

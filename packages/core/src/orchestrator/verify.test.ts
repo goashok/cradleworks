@@ -20,7 +20,7 @@ import type { AgentRunRequest } from '@cradleworks/interfaces';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProjectConfig } from '../config/types.ts';
 import { Orchestrator, type OrchestratorDeps, type Progress, type Project } from './index.ts';
-import { combine, parseReview } from './verify.ts';
+import { combine, evidenceMarkdown, parseReview } from './verify.ts';
 import { skillHash } from './skills.ts';
 
 const baseConfig: ProjectConfig = {
@@ -205,6 +205,79 @@ describe('skills', () => {
     expect(review.skillsMissing).toEqual(['nope']);
     expect(packs.find((x) => x.role === 'implementer')!.files.find((f) => f.kind === 'skill')).toMatchObject({ load: 'always', lock: 'mismatch' });
     expect(events.find((e) => e.type === 'skills_opened')!.payload).toEqual({ offered: ['migrations'], opened: ['migrations'] });
+  });
+});
+
+describe('agent checks', () => {
+  const SEC = '---\nname: security-review\ndescription: Finds injection and leaked secrets\n---\nLook for SQL built from strings.\n';
+  const REWORK = '{"verdict": "rework", "risk": "high", "reasons": ["src/db.ts:3 builds SQL from user input"]}';
+
+  async function repoWith(files: Record<string, string>): Promise<Project> {
+    const repo = join(root, `checks-${Object.keys(files).length}-${Math.random().toString(36).slice(2, 8)}.git`);
+    const skill = { 'SKILL.md': SEC };
+    await createBareRepo(repo, {
+      'README.md': '# Demo\n',
+      '.factory/rules/style.md': 'Keep it short.\n',
+      '.factory/skills/security-review/SKILL.md': SEC,
+      '.factory/prompts/reviewer.md': 'Reviewer-only note.\n',
+      '.factory/skills.lock': JSON.stringify({ 'security-review': { source: 'local', hash: skillHash(Object.entries(skill).map(([path, content]) => ({ path, content }))) } }),
+      ...files,
+    });
+    return { repo: localRepoRef(repo), config: { ...baseConfig, verify: { tester: true, agentChecks: [{ name: 'security', skill: 'security-review', blocks: true, maxShare: 0.25, model: 'sec-model' }] } } };
+  }
+  const isCheck = (req: AgentRunRequest) => req.rolePrompt.includes('"security" check');
+
+  it('runs a blocking check with drill cases after the reviewer; its rework sends the change back, labelled', async () => {
+    const p = await repoWith({ '.factory/drill/security/sqli.patch': 'diff\n' });
+    let checkRuns = 0;
+    const o = orchestrator({
+      implement: (_req, n) => [say('Done.'), { kind: 'write', path: 'fixed.txt', content: `attempt ${n}\n` }],
+      review: (req) => (isCheck(req) ? (++checkRuns === 1 ? [say(`Found one.\n${REWORK}`)] : [say(`Fine now.\n${PASS}`)]) : [say(`Looks right.\n${PASS}`)]),
+    });
+    const { workItemId, taskId } = await start(o, p);
+    await o.runTask(p, workItemId, taskId);
+
+    const check = requests.find(isCheck)!;
+    expect(check.profile).toMatchObject({ role: 'reviewer', model: 'sec-model' });
+    expect(check.rolePrompt).toContain('Look for SQL built from strings.');
+    expect(check.rolePrompt).not.toContain('Reviewer-only note.');
+    expect(check.limits.maxSpendUsd).toBeLessThanOrEqual(1.25);
+    expect(requests.find((r) => r.profile.role === 'reviewer' && !isCheck(r))!.rolePrompt).not.toContain('Look for SQL');
+
+    const wi = (await o.getWorkItem(workItemId))!;
+    const task = wi.tasks[0]!;
+    expect(task.reworkLoops).toBe(1);
+    expect(task.evidence!.verdict).toBe('pass');
+    expect(task.evidence!.reason).toContain('agent check security passed');
+    const second = requests.filter((r) => r.profile.role === 'implementer')[1]!;
+    expect(second.input).toContain('### Agent check `security`');
+    expect(second.input).toContain('src/db.ts:3 builds SQL from user input');
+    const events = [];
+    for (const run of wi.runs) events.push(...(await store.readStream(run.id)));
+    expect(events.find((e) => e.type === 'agent_check_decided')!.payload).toMatchObject({ name: 'security', blocking: true, verdict: 'rework', model: 'sec-model' });
+    expect(events.find((e) => e.type === 'context_pack_built' && (e.payload as { check?: string }).check === 'security')).toBeDefined();
+  });
+
+  it('runs a blocking check with no drill cases as advisory: reported, never sending the change back', async () => {
+    const p = await repoWith({});
+    const o = orchestrator({ implement: () => [say('Done.'), write('fixed.txt')], review: (req) => [say(isCheck(req) ? REWORK : PASS)] });
+    const { workItemId, taskId } = await start(o, p);
+    await o.runTask(p, workItemId, taskId);
+    const task = (await o.getWorkItem(workItemId))!.tasks[0]!;
+    expect(task.reworkLoops).toBe(0);
+    expect(task.evidence!.verdict).toBe('pass');
+    expect(task.evidence!.agentChecks![0]).toMatchObject({ blocking: false, verdict: 'rework', advisoryReason: 'no known-bad drill cases in .factory/drill/security/' });
+  });
+
+  it("escalates when a blocking check couldn't check, and never counts that as a pass", async () => {
+    const p = await repoWith({ '.factory/drill/security/sqli.patch': 'diff\n' });
+    const o = orchestrator({ implement: () => [say('Done.'), write('fixed.txt')], review: (req) => [say(isCheck(req) ? 'No verdict here.' : PASS)] });
+    const { workItemId, taskId } = await start(o, p);
+    await o.runTask(p, workItemId, taskId);
+    const task = (await o.getWorkItem(workItemId))!.tasks[0]!;
+    expect(task.state).toBe('escalated');
+    expect(task.evidence!.reason).toMatch(/^security check: couldn't check: The reviewer's verdict could not be read/);
+    expect(requests.filter(isCheck)).toHaveLength(2);
   });
 });
 
@@ -516,5 +589,23 @@ describe('verdict rules', () => {
     expect(combine(passed, { state: 'failed', runs: [] }, review).verdict).toBe('rework');
     expect(combine(passed, { state: 'timed_out', runs: [] }, review).verdict).toBe('escalate');
     expect(combine(passed, { state: 'none', runs: [] }, review).verdict).toBe('pass');
+  });
+});
+
+describe('combine with agent checks', () => {
+  const ci = { state: 'not_configured' as const, runs: [] };
+  const review = { verdict: 'pass' as const, risk: 'low' as const, reasons: [], model: 'm' };
+  const check = (over: Partial<import('../domain/types.ts').AgentCheckResult>) => ({ name: 'sec', skill: 's', blocking: true, verdict: 'pass' as const, risk: 'low' as const, reasons: [], model: 'm', costUsd: 0.01, ...over });
+  it('lets blocking checks send back or escalate, escalation first, and ignores advisory ones', () => {
+    expect(combine([], ci, review, [check({ blocking: false, verdict: 'rework', reasons: ['x'] })]).verdict).toBe('pass');
+    expect(combine([], ci, review, [check({ verdict: 'rework', reasons: ['x'] })])).toEqual({ verdict: 'rework', reason: 'sec check: x' });
+    expect(combine([], ci, { ...review, verdict: 'rework', reasons: ['r'] }, [check({ name: 'a11y', verdict: 'escalate', reasons: ['y'] })])).toEqual({ verdict: 'escalate', reason: 'a11y check: y' });
+    expect(combine([], ci, review, [check({ verdict: 'escalate', couldNotCheck: 'it reached its ceiling' })]).reason).toBe("sec check: couldn't check: it reached its ceiling");
+    expect(combine([], ci, review, [check({})]).reason).toContain('agent check sec passed');
+  });
+  it('shows each check on the pull request, with whether it counted', () => {
+    const md = evidenceMarkdown({ runId: 'run_1', sha: 'abcdef1234567', checks: [], ci, review, agentChecks: [check({ blocking: false, advisoryReason: 'no drill', verdict: 'rework', reasons: ['x'] }), check({ name: 'b', couldNotCheck: 'timed out' })], verdict: 'pass', reason: 'ok', costUsd: 0.1, verifiedAt: 't' }, 1);
+    expect(md).toContain('### Agent check `sec` (advisory: no drill; m, $0.0100): rework, low risk');
+    expect(md).toContain("### Agent check `b` (blocking; m, $0.0100): couldn't check\n- timed out");
   });
 });

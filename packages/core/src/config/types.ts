@@ -63,6 +63,8 @@ export interface ProjectConfig {
   verify: {
     /** Run the tester agent on work items that have a spec (from an issue). */
     tester: boolean;
+    /** Further reviewers in Verify, each with one focus given by a skill. In file order. */
+    agentChecks?: AgentCheckConfig[];
   };
   /** Other repositories, by local path from this one, that the planner may give tasks to. */
   relatedRepos: string[];
@@ -86,4 +88,17 @@ export interface RoleConfig extends Partial<AgentChoice> {
 export function resolveAgent(config: ProjectConfig, role: AgentRole): AgentChoice {
   const override = config.runtime.roles[role] ?? {};
   return { agent: override.agent ?? config.runtime.agent, model: override.model ?? config.runtime.model };
+}
+
+/** `verify.agent_checks.<name>`: a reviewer with one focus, whose verdict counts as one of Verify's checks. */
+export interface AgentCheckConfig {
+  name: string;
+  /** A skill in `.factory/skills/`, given to the check whole. */
+  skill: string;
+  /** Its rework or escalation counts; otherwise it is only reported. Needs drill cases to take effect. */
+  blocks: boolean;
+  /** Of the task's per-task budget, per Verify run; a check that reaches it couldn't check. */
+  maxShare: number;
+  agent?: string;
+  model?: string;
 }

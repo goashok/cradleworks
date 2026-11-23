@@ -138,3 +138,30 @@ describe('console views', () => {
     expect(html).toContain('<a href="/wi/wi_1">Export orders</a> › Add export');
   });
 });
+
+describe('agent checks in the evidence', () => {
+  it('shows each check with its verdict, and says when one only advises', async () => {
+    const { evidenceBlock, evidenceLine } = await import('./console-view.ts');
+    const ev = {
+      runId: 'run_1',
+      sha: 'abc1234567',
+      checks: [],
+      ci: { state: 'not_configured' as const, runs: [] },
+      review: { verdict: 'pass' as const, risk: 'low' as const, reasons: [], model: 'm' },
+      agentChecks: [
+        { name: 'security', skill: 'sec', blocking: true, verdict: 'rework' as const, risk: 'high' as const, reasons: ['raw SQL in <db>'], model: 'm2', costUsd: 0.05 },
+        { name: 'a11y', skill: 'a11y', blocking: false, advisoryReason: 'no known-bad drill cases', verdict: 'escalate' as const, risk: 'high' as const, reasons: [], couldNotCheck: 'it reached its ceiling', model: 'm', costUsd: 1.25 },
+      ],
+      verdict: 'rework' as const,
+      reason: 'security check: raw SQL',
+      costUsd: 1.3,
+      verifiedAt: '2026-11-23T12:00:00.000Z',
+    };
+    expect(evidenceLine(ev)).toBe("0 checks passed · reviewer: pass, low risk · security: rework · a11y: couldn't check (advisory)");
+    const html = evidenceBlock(ev);
+    expect(html).toContain('<b>Agent check <code>security</code></b>');
+    expect(html).toContain('raw SQL in &lt;db&gt;');
+    expect(html).toContain('title="no known-bad drill cases">advisory: reported, doesn\'t send back');
+    expect(html).toContain('<li>it reached its ceiling</li>');
+  });
+});

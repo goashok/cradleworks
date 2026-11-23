@@ -272,7 +272,8 @@ export function evidenceLine(ev: Evidence): string {
   const checks = failed ? `${failed} of ${ev.checks.length} checks failed` : `${ev.checks.length} check${ev.checks.length === 1 ? '' : 's'} passed`;
   const ci = ev.ci.state === 'passed' ? 'CI passed' : ev.ci.state === 'failed' ? 'CI failed' : '';
   const review = ev.review ? `reviewer: ${ev.review.verdict}, ${ev.review.risk} risk` : '';
-  return [checks, ci, review].filter(Boolean).join(' · ');
+  const agent = (ev.agentChecks ?? []).map((c) => `${c.name}: ${c.couldNotCheck ? "couldn't check" : c.verdict}${c.blocking ? '' : ' (advisory)'}`);
+  return [checks, ci, review, ...agent].filter(Boolean).join(' · ');
 }
 
 export function evidenceBlock(ev: Evidence, runHref?: string, folded = false): string {
@@ -283,8 +284,16 @@ export function evidenceBlock(ev: Evidence, runHref?: string, folded = false): s
   const review = ev.review
     ? `<div class="sub"><b>Reviewer</b> ${chip(`${ev.review.verdict === 'pass' ? 'pass' : ev.review.verdict}, ${ev.review.risk} risk`, ev.review.verdict === 'pass' ? 'ok' : 'wait')}${ev.review.reasons.length ? `<ul>${ev.review.reasons.map((r) => `<li>${prose(r)}</li>`).join('')}</ul>` : ''}</div>`
     : '<div class="sub muted">The reviewer did not run: the checks decided first.</div>';
+  const agentChecks = (ev.agentChecks ?? [])
+    .map((c) => {
+      const state = c.couldNotCheck ? chip("couldn't check", 'wait') : chip(`${c.verdict}, ${c.risk} risk`, c.verdict === 'pass' ? 'ok' : 'wait');
+      const kind = c.blocking ? '' : ` <span class="muted small" title="${esc(c.advisoryReason ?? 'blocks: false in factory.yaml')}">advisory: reported, doesn't send back</span>`;
+      const body = c.couldNotCheck ? [c.couldNotCheck] : c.reasons;
+      return `<div class="sub"><b>Agent check <code>${esc(c.name)}</code></b> ${state}${kind} <span class="muted small">${esc(c.model)} · ${money(c.costUsd)}</span>${body.length ? `<ul>${body.map((r) => `<li>${prose(r)}</li>`).join('')}</ul>` : ''}</div>`;
+    })
+    .join('');
   return `<div class="evidence"><div class="row"><b>Latest check</b> ${verdict}<span class="muted">${when(ev.verifiedAt)}${runHref ? ` · <a href="${esc(runHref)}">see the run</a>` : ''}</span></div>
-<div class="cols"><div><div class="label">Project checks</div>${checksTable(ev.checks)}</div><div><div class="label">CI</div><p>${esc(ci)} ${ciLinks}${ev.ci.note ? `<br><span class="muted">${esc(ev.ci.note)}</span>` : ''}</p></div></div>${review}</div>`;
+<div class="cols"><div><div class="label">Project checks</div>${checksTable(ev.checks)}</div><div><div class="label">CI</div><p>${esc(ci)} ${ciLinks}${ev.ci.note ? `<br><span class="muted">${esc(ev.ci.note)}</span>` : ''}</p></div></div>${review}${agentChecks}</div>`;
 }
 
 export function taskCard(t: Task, wi: WorkItem, actions: string): string {
@@ -347,6 +356,8 @@ function agentRole(after: string | undefined, station: string, what?: string): s
       return 'Tester: writes acceptance tests from the spec, without seeing the change';
     case 'review_decided':
       return 'Reviewer: judges the change';
+    case 'agent_check_decided':
+      return `Agent check${what ? ` "${what}"` : ''}: judges one thing, with its skill`;
     case 'tests_reviewed':
       return 'Test review: rechecks disputed acceptance tests';
     case 'check_decided':
@@ -456,6 +467,12 @@ function resultSection(events: StoredEvent[], wiId?: string): string {
       case 'tests_reviewed':
         parts.push(`<p>Disputed tests ${p.verdict === 'revised' ? 'revised' : 'upheld'}.</p><ul>${((p.reasons as string[] | undefined) ?? []).map((r) => `<li>${prose(r)}</li>`).join('')}</ul>`);
         break;
+      case 'agent_check_decided': {
+        const body = p.couldNotCheck ? [String(p.couldNotCheck)] : ((p.reasons as string[] | undefined) ?? []);
+        const state = p.couldNotCheck ? chip("couldn't check", 'wait') : chip(`${String(p.verdict)}, ${String(p.risk)} risk`, p.verdict === 'pass' ? 'ok' : 'wait');
+        parts.push(`<div><b>Agent check <code>${esc(p.name)}</code></b> ${state}${p.blocking ? '' : ' <span class="muted small">advisory</span>'}${body.length ? `<ul>${body.map((r) => `<li>${prose(r)}</li>`).join('')}</ul>` : ''}</div>`);
+        break;
+      }
       case 'review_decided': {
         const reasons = (p.reasons as string[] | undefined) ?? [];
         parts.push(`<div><b>Reviewer</b> ${chip(`${String(p.verdict)}, ${String(p.risk)} risk`, p.verdict === 'pass' ? 'ok' : 'wait')}${reasons.length ? `<ul>${reasons.map((r) => `<li>${prose(r)}</li>`).join('')}</ul>` : ''}</div>`);
@@ -568,8 +585,9 @@ export function runBody(v: RunView, rawLog: string): string {
     } else if (e.type === 'agent_event' && current) {
       const ev = (e.payload as { event?: AgentEvent }).event;
       if (ev && ev.type !== 'usage') current.events.push(ev);
-    } else if (current && !current.name && ['acceptance_tests', 'review_decided', 'tests_reviewed', 'check_decided', 'spec_answer', 'plan_checked', 'changes_committed', 'task_declined'].includes(e.type)) {
-      current.name = agentRole(e.type, station, (e.payload as { what?: string }).what);
+    } else if (current && !current.name && ['acceptance_tests', 'review_decided', 'agent_check_decided', 'tests_reviewed', 'check_decided', 'spec_answer', 'plan_checked', 'changes_committed', 'task_declined'].includes(e.type)) {
+      const pl = e.payload as { what?: string; name?: string };
+      current.name = agentRole(e.type, station, e.type === 'agent_check_decided' ? pl.name : pl.what);
     }
   }
   for (const s of segments) if (!s.name) s.name = agentRole(undefined, station);

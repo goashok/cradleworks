@@ -457,8 +457,80 @@ describe('factory skills', () => {
     writeFileSync(join(checkout, '.factory/skills/empty/notes.md'), 'x\n');
     const r = await factory(['validate']);
     expect(r.code).toBe(2);
-    expect(r.stderr).toContain('use the skill "migrations", but .factory/skills/migrations/ is missing');
+    expect(r.stderr).toContain('the skill "migrations" is given to reviewer, but .factory/skills/migrations/ is missing');
     expect(r.stderr).toContain('.factory/skills/empty: needs a SKILL.md');
     expect(r.stdout).toContain('.factory/skills/empty is vendored but no role uses it');
+  });
+});
+
+describe('agent checks and factory drill', () => {
+  const SEC = '---\nname: sec\ndescription: Security review\n---\nSend back anything unsafe.\n';
+  const yaml = FACTORY_YAML + 'verify: { tester: false, agent_checks: { security: { skill: sec, blocks: true } } }\n';
+  const patch = (file: string) => `diff --git a/${file} b/${file}\nnew file mode 100644\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1 @@\n+hello\n`;
+
+  // The security check sends back changes titled "unsafe"; the reviewer passes everything.
+  function judging(): Registry {
+    const base = defaultRegistry();
+    return {
+      ...base,
+      runtime: {
+        scripted: () =>
+          new ScriptedAgentRuntime((req) => {
+            const unsafe = req.rolePrompt.includes('"security" check') && /unsafe/i.test(req.input);
+            return [{ kind: 'message', text: unsafe ? '{"verdict":"rework","risk":"high","reasons":["unsafe query"]}' : '{"verdict":"pass","risk":"low","reasons":[]}' }];
+          }),
+      },
+    };
+  }
+
+  async function setUp(files: Record<string, string>) {
+    mkdirSync(join(checkout, '.factory/skills/sec'), { recursive: true });
+    writeFileSync(join(checkout, '.factory/skills/sec/SKILL.md'), SEC);
+    writeFileSync(join(checkout, '.factory/factory.yaml'), yaml);
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(checkout, path, '..'), { recursive: true });
+      writeFileSync(join(checkout, path), content);
+    }
+    await factory(['skills', 'lock', 'sec']);
+    await git(['-C', checkout, 'add', '-A']);
+    await git(['-C', checkout, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-m', 'checks']);
+    await git(['-C', checkout, 'push', '--quiet', 'origin', 'HEAD']);
+  }
+
+  it('says a blocking check without known-bad cases runs advisory, and refuses a drill folder for no check', async () => {
+    await setUp({ '.factory/drill/secuirty/x.patch': patch('x.txt') });
+    const r = await factory(['validate']);
+    expect(r.code).toBe(2);
+    expect(r.stdout).toContain('verify.agent_checks.security is set to block, but has no known-bad drill cases in .factory/drill/security/, so it runs as advisory');
+    expect(r.stderr).toContain('.factory/drill/secuirty/ is not for the reviewer, the controls or an agent check');
+  });
+
+  it('drills each check on its known-bad cases and the controls, confirming a pass before calling it a miss', async () => {
+    await setUp({
+      '.factory/drill/security/raw-sql.patch': patch('raw.txt'),
+      '.factory/drill/security/raw-sql.md': '# Add an unsafe query\n\nBuild the query from the request.\n',
+      '.factory/drill/controls/readme.patch': patch('readme2.txt'),
+      '.factory/drill/controls/readme.md': '# Add a second readme\n',
+    });
+    expect((await factory(['validate'])).code).toBe(0);
+    const ok = await factory(['drill'], checkout, judging());
+    expect(ok.stdout).toContain('security on security/raw-sql: right  rework');
+    expect(ok.stdout).toContain('security on controls/readme: right  pass');
+    expect(ok.stdout).toContain('security: sent back 1 of 1 known-bad, passed 1 of 1 controls');
+    expect(ok.code).toBe(0);
+
+    // A case the check can't catch: it passes twice, so the drill flags it, unless it's a known miss.
+    writeFileSync(join(checkout, '.factory/drill/security/subtle.patch'), patch('subtle.txt'));
+    writeFileSync(join(checkout, '.factory/drill/security/subtle.md'), '# Tidy the query builder\n');
+    const missed = await factory(['drill', '--check', 'security'], checkout, judging());
+    expect(missed.stdout).toContain('security on security/subtle: WRONG  pass, then pass');
+    expect(missed.stdout).toContain('Flagged: security missed security/subtle.');
+    expect(missed.code).toBe(1);
+    writeFileSync(join(checkout, '.factory/drill/known-misses.txt'), 'security/subtle  needs data-flow analysis\n');
+    expect((await factory(['drill', '--check', 'security'], checkout, judging())).code).toBe(0);
+
+    const reviewed = await factory(['review', join(checkout, '.factory/drill/security/raw-sql.patch'), '--title', 'Add an unsafe query', '--check', 'security'], checkout, judging());
+    expect(reviewed.code).toBe(1);
+    expect(reviewed.stdout).toContain('rework, high risk');
   });
 });

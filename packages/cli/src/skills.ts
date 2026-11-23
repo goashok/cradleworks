@@ -50,6 +50,7 @@ function usedBy(config: ProjectConfig): Map<string, string[]> {
     for (const name of r?.alwaysSkills ?? []) out.set(name, [...(out.get(name) ?? []), `${role} (always)`]);
     for (const name of r?.skills ?? []) if (!(r?.alwaysSkills ?? []).includes(name)) out.set(name, [...(out.get(name) ?? []), role]);
   }
+  for (const c of config.verify.agentChecks ?? []) out.set(c.skill, [...(out.get(c.skill) ?? []), `the ${c.name} check`]);
   return out;
 }
 
@@ -81,7 +82,7 @@ export function checkSkills(repoRoot: string, config: ProjectConfig): { problems
     if (!users.has(name)) notes.push(`${where} is vendored but no role uses it`);
   }
   for (const name of Object.keys(lock)) if (!vendored.includes(name)) problems.push(`${SKILLS_LOCK} lists ${name}, but ${SKILLS_DIR}/${name}/ is missing`);
-  for (const [name, roles] of users) if (!vendored.includes(name)) problems.push(`runtime.roles: ${roles.join(', ')} use the skill "${name}", but ${SKILLS_DIR}/${name}/ is missing`);
+  for (const [name, roles] of users) if (!vendored.includes(name)) problems.push(`the skill "${name}" is given to ${roles.join(', ')}, but ${SKILLS_DIR}/${name}/ is missing`);
   return { problems, notes, count: vendored.length };
 }
 

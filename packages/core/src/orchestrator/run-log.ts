@@ -3,13 +3,13 @@
 
 import type { AgentEvent, AgentRole, NetworkDecision, NetworkPolicy, StateStore } from '@cradleworks/interfaces';
 import type { ContextFile } from './context-pack.ts';
-import type { CheckResult, CiResult, ReviewResult, VerifyVerdict } from '../domain/types.ts';
+import type { AgentCheckResult, CheckResult, CiResult, ReviewResult, VerifyVerdict } from '../domain/types.ts';
 
 export type RunLogEntry =
   | { type: 'run_context'; workItemId: string; taskId: string; station: string; attempt?: number }
   /** A review of a change the factory didn't build (`reviewChange`): no work item or task. */
-  | { type: 'run_context'; station: 'review'; title: string; base: string }
-  | { type: 'context_pack_built'; role?: AgentRole; base?: string; files: ContextFile[]; dropped: string[]; budgetBytes: number; skillsMissing?: string[] }
+  | { type: 'run_context'; station: 'review'; title: string; base: string; check?: string }
+  | { type: 'context_pack_built'; role?: AgentRole; base?: string; files: ContextFile[]; dropped: string[]; budgetBytes: number; skillsMissing?: string[]; check?: string }
   /** On-demand skills offered to an agent run, and which of them it opened. */
   | { type: 'skills_opened'; offered: string[]; opened: string[] }
   | { type: 'checkout_cloned'; path: string; repo: string }
@@ -34,7 +34,9 @@ export type RunLogEntry =
   | { type: 'check_decided'; what: 'spec' | 'plan'; verdict: 'approved' | 'rejected'; reasons: string[] }
   | { type: 'acceptance_tests'; files: string[]; note?: string }
   | { type: 'budget_stopped'; reason: string }
-  | { type: 'review_retried'; reason: string }
+  | { type: 'review_retried'; check?: string; reason: string }
+  /** One agent check's verdict in Verify, or in a review by hand. */
+  | ({ type: 'agent_check_decided' } & AgentCheckResult)
   | { type: 'tests_reviewed'; verdict: 'revised' | 'upheld'; reasons: string[]; files: string[] }
   | { type: 'secrets_found'; findings: Array<{ file: string; line: number; kind: string }> }
   | { type: 'protected_paths_changed'; paths: string[] }
