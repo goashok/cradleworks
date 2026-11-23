@@ -97,9 +97,10 @@ export function headline(wi: WorkItem): { text: string; tone: Tone; needsYou: bo
 export function steps(wi: WorkItem): string {
   const names = ['Request', 'Spec', 'Plan', 'Build & check', 'Merged'];
   const at: Record<string, number> = { received: 0, specifying: 1, awaiting_spec_approval: 1, planning: 2, in_progress: 3, awaiting_change_approval: 3, merged: 4 };
-  const stopped = ['blocked', 'failed', 'cancelled'].includes(wi.state);
+  // Stopped, or waiting on a person: the current step shows amber rather than as work under way.
+  const stopped = ['blocked', 'failed', 'cancelled'].includes(wi.state) || headline(wi).needsYou;
   const from = wi.state === 'blocked' && wi.blockedFrom ? wi.blockedFrom : wi.tasks.length ? 'in_progress' : wi.spec ? 'planning' : 'specifying';
-  const current = stopped ? (at[from] ?? 0) : (at[wi.state] ?? 0);
+  const current = ['blocked', 'failed', 'cancelled'].includes(wi.state) ? (at[from] ?? 0) : (at[wi.state] ?? 0);
   // A task submitted without an issue has no spec or plan.
   const skipped = (i: number) => !wi.spec && wi.tasks.length > 0 && (i === 1 || i === 2);
   return `<ol class="steps">${names
