@@ -1131,7 +1131,9 @@ export class Orchestrator {
       sandbox = await this.#deps.sandbox.create({ taskId: `${shortId(runId)}-review`, source: checkout, baseRef: `origin/${base}`, branch, image: project.config.stack.image, network });
       await log.write({ type: 'sandbox_created', sandboxId: sandbox.id, branch, baseRef: `origin/${base}`, network });
       step = 'apply';
-      const applied = await this.#deps.sandbox.exec(sandbox, ['git', 'apply', '--index', '--whitespace=nowarn', '-'], { stdin: input.patch });
+      // Files only, as an agent writes them: the checkout's index belongs to the commit below,
+      // made from outside the sandbox as Build's is.
+      const applied = await this.#deps.sandbox.exec(sandbox, ['git', 'apply', '--whitespace=nowarn', '-'], { stdin: input.patch });
       if (applied.exitCode !== 0) throw new Error(`the patch does not apply to ${base}: ${(applied.stderr || applied.stdout).trim()}`);
       const sha = (await this.#deps.sourceControl.commit({ repo: project.repo, path: sandbox.workspacePath }, `${input.title}\n\nChange under review (run ${runId}).`)).sha;
       await log.write({ type: 'changes_committed', sha });

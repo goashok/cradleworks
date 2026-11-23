@@ -1,7 +1,8 @@
 // End-to-end tests of Verify, the rework loop and the change gate on the fakes: real git,
 // real files, commands run as processes, scripted implementer and reviewer.
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -362,7 +363,8 @@ describe('reviewing a change by hand', () => {
     const o = orchestrator({
       implement: () => [],
       review: (req) => {
-        saw = existsSync(join(req.sandbox.workspacePath, 'fixed.txt'));
+        // What the reviewer's `git diff origin/main...HEAD` shows: the change, committed.
+        saw = execFileSync('git', ['-C', req.sandbox.workspacePath, 'diff', '--name-only', 'origin/main...HEAD'], { encoding: 'utf8' }).trim() === 'fixed.txt';
         return [say('Missing a test.\n{"verdict":"rework","risk":"medium","reasons":["fixed.txt has no test"]}')];
       },
     });
