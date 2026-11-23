@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBareRepo, git, ScriptedAgentRuntime } from '@cradleworks/contracts/fakes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { commandFor, esc, sameOrigin, startConsole } from './console.ts';
+import { commandFor, esc, sameOrigin, startConsole, workItemPage } from './console.ts';
 import { defaultRegistry, run, type Registry } from './index.ts';
 
 const FACTORY_YAML = `project: demo
@@ -102,6 +102,21 @@ describe('factory console', () => {
 });
 
 describe('console helpers', () => {
+  it('puts every choice open on a work item in one panel under its headline', () => {
+    const base = { id: 'wi_1', source: { id: 'o/r#1' }, requester: 'sam', projectId: 'demo', title: 'T', maxReworkLoops: 3, proposedTasks: [], spentUsd: 0, gateDecisions: [], runs: [], createdAt: '2026-11-23T10:00:00Z', updatedAt: '2026-11-23T10:00:00Z', version: 1 };
+    const task = { id: 'task_1', specId: 's', title: 'Fix dates', dependsOn: [], size: 'small', state: 'failed', reworkLoops: 0, gateReworks: 0, extraLoops: 0, changeApproved: false, spentUsd: 0, lastReason: 'agent failed' };
+    const html = workItemPage({ ...base, state: 'in_progress', tasks: [task] } as never, '', 'tok');
+    const panel = /<div class="actions panel">.*?<\/div><\/div><\/div>/s.exec(html)?.[0] ?? '';
+    expect(panel).toContain('<button class="primary">Retry</button>');
+    expect(panel).toContain('<button class="danger">Cancel this work</button>');
+    expect(html.match(/name="action" value="retry"/g)).toHaveLength(1);
+    const two = workItemPage({ ...base, state: 'in_progress', tasks: [task, { ...task, id: 'task_2', title: 'Fix totals', state: 'escalated' }] } as never, '', 'tok');
+    expect(two).toContain('Retry “Fix dates”');
+    expect(two).toContain('Retry “Fix totals”');
+    const done = workItemPage({ ...base, state: 'cancelled', tasks: [task] } as never, '', 'tok');
+    expect(done).not.toContain('<form');
+  });
+
   it('maps only known actions with what they need', () => {
     expect(commandFor({ action: 'retry', id: 'task_1' })).toEqual(['retry', 'task_1', '--no-run']);
     expect(commandFor({ action: 'extend', id: 'task_1', usd: '2.5' })).toEqual(['budget', 'extend', 'task_1', '--usd', '2.5', '--no-run']);

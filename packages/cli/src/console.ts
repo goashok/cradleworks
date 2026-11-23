@@ -72,6 +72,9 @@ code{font:12.5px ui-monospace,Menlo,monospace;background:var(--soft);padding:1px
 pre{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font:12.5px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;max-height:480px;overflow-y:auto}
 form{display:inline-flex;gap:6px;margin:4px 8px 4px 0;flex-wrap:wrap}input[type=text],input[type=number]{padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--fg);font:inherit;min-width:0}
 button{padding:5px 12px;border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--fg);font:inherit;cursor:pointer}button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}button.primary:hover{filter:brightness(1.1)}
+button.danger{color:var(--bad);border-color:var(--bad)}button.danger:hover{background:var(--badbg)}
+.actions.panel{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}.actions.panel .or{color:var(--muted);font-size:13px}.actions.panel form{margin:2px 0}.decide{display:flex;flex-wrap:wrap;gap:4px 8px}
 .notice{padding:10px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);margin-bottom:16px;white-space:pre-wrap}
 .actions{margin:8px 0}.scroll{overflow-x:auto}@media (max-width:640px){.hide-sm{display:none}.steps li{font-size:11px;padding:5px 2px}h1{font-size:19px}.card{padding:12px}details.tool{margin-left:0}}
 </style></head><body><header><b>Cradleworks</b><a href="/">Work</a><a href="/waiting">Waiting on a person</a></header><main>${body}</main></body></html>`;
@@ -98,26 +101,32 @@ export function listPage(items: WorkItem[], filter: 'all' | 'waiting'): string {
   return page(title, `<h1>${title}</h1>${rows.length ? `<div class="scroll"><table><tr><th>Work item</th><th>State</th><th>Tasks</th><th>Spent</th><th class="hide-sm">Requester</th></tr>${rows.join('')}</table></div>` : `<p class="muted">${empty}</p>`}`, true);
 }
 
-function form(token: string, action: string, id: string, label: string, extra = ''): string {
-  return `<form method="post" action="/action"><input type="hidden" name="token" value="${esc(token)}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="id" value="${esc(id)}">${extra}<button>${esc(label)}</button></form>`;
+function form(token: string, action: string, id: string, label: string, extra = '', kind: 'primary' | 'danger' | '' = ''): string {
+  return `<form method="post" action="/action"><input type="hidden" name="token" value="${esc(token)}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="id" value="${esc(id)}">${extra}<button${kind ? ` class="${kind}"` : ''}>${esc(label)}</button></form>`;
 }
 const REASON = '<input type="text" name="reason" placeholder="Reason" required>';
 
-/** Buttons for one task, shown on its card. */
-function taskActions(t: WorkItem['tasks'][number], token: string): string {
-  const own: string[] = [];
-  if (t.state === 'ready' && !t.changeApproved) own.push(form(token, 'approve', t.id, 'Approve change'), form(token, 'reject', t.id, 'Send back', REASON));
-  if (t.state === 'escalated' || t.state === 'failed') own.push(form(token, 'retry', t.id, 'Retry'));
-  if (t.state === 'budget_exceeded') own.push(form(token, 'extend', t.id, 'Extend budget', '<input type="number" name="usd" min="0.5" step="0.5" value="5" style="width:80px">'));
-  return own.length ? `<div class="actions">${own.join('')}</div>` : '';
+/** The decisions one task waits on, as buttons; `named` puts the task's title on them. */
+function taskActions(t: WorkItem['tasks'][number], token: string, named: boolean): string[] {
+  const of = named ? ` “${t.title}”` : '';
+  if (t.state === 'ready' && !t.changeApproved) return [form(token, 'approve', t.id, `Approve change${of}`, '', 'primary'), form(token, 'reject', t.id, 'Send back', REASON)];
+  if (t.state === 'escalated' || t.state === 'failed') return [form(token, 'retry', t.id, `Retry${of}`, '', 'primary')];
+  if (t.state === 'budget_exceeded') return [form(token, 'extend', t.id, `Extend budget${of}`, '<input type="number" name="usd" min="0.5" step="0.5" value="5" style="width:80px" aria-label="Extra US dollars">', 'primary')];
+  return [];
 }
 
-/** Buttons for the work item as a whole: the spec gate and cancelling. */
+/**
+ * Every action open on the work item, in one place under the headline: what it waits on first,
+ * then cancelling, which is always open until the work is finished.
+ */
 function workItemActions(wi: WorkItem, token: string): string {
-  const parts: string[] = [];
-  if (wi.state === 'awaiting_spec_approval') parts.push(`<div>${form(token, 'approve', wi.id, 'Approve the spec')}${form(token, 'reject', wi.id, 'Send the spec back', REASON)}</div>`);
-  if (!['merged', 'cancelled'].includes(wi.state)) parts.push(`<details><summary class="muted small">Cancel this work</summary>${form(token, 'cancel', wi.id, 'Cancel work item', REASON)}</details>`);
-  return parts.join('');
+  if (FINISHED.has(wi.state)) return '';
+  const decide: string[] = [];
+  if (wi.state === 'awaiting_spec_approval') decide.push(form(token, 'approve', wi.id, 'Approve the spec', '', 'primary'), form(token, 'reject', wi.id, 'Send the spec back', REASON));
+  const waiting = wi.tasks.filter((t) => taskActions(t, token, false).length);
+  for (const t of waiting) decide.push(...taskActions(t, token, waiting.length > 1));
+  const cancel = form(token, 'cancel', wi.id, 'Cancel this work', '<input type="text" name="reason" placeholder="Why cancel?" required aria-label="Reason for cancelling">', 'danger');
+  return `<div class="actions panel">${decide.length ? `<div class="decide">${decide.join('')}</div><div class="or">or</div>` : ''}<div>${cancel}</div></div>`;
 }
 
 export interface WorkItemExtras {
@@ -136,10 +145,9 @@ export function workItemPage(wi: WorkItem, description: string, token: string, n
   const body = `${notice ? `<div class="notice">${esc(notice)}</div>` : ''}<p class="crumbs"><a href="/">Work</a></p><h1>${esc(wi.title)}</h1>
 <p class="muted small">${esc(wi.projectId)} · asked by ${esc(wi.requester)} · started ${esc(new Date(wi.createdAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))} · spent ${money(wi.spentUsd)}${source}</p>
 ${steps(wi)}
-<div class="headline ${h.tone}">${h.needsYou ? `${chip('Needs you', 'wait')} ` : ''}${esc(h.text)}</div>
-${workItemActions(wi, token)}
+<div class="headline ${h.tone}"><div>${h.needsYou ? `${chip('Needs you', 'wait')} ` : ''}${esc(h.text)}</div>${workItemActions(wi, token)}</div>
 ${specSection(extras.spec, wi)}
-${wi.tasks.length ? `<h2>Tasks</h2>${wi.tasks.map((t) => taskCard(t, wi, FINISHED.has(wi.state) ? '' : taskActions(t, token))).join('')}` : planned}
+${wi.tasks.length ? `<h2>Tasks</h2>${wi.tasks.map((t) => taskCard(t, wi, !FINISHED.has(wi.state) && taskActions(t, token, false).length ? '<p class="muted small">↑ Your choices for this task are at the top of the page.</p>' : '')).join('')}` : planned}
 ${storySection(story(wi, events))}
 ${runsTable(wi, costByRun(events))}
 <details class="card"><summary><b>Raw status</b> <span class="muted small">as <code>factory status</code> prints it</span></summary><pre>${esc(description)}</pre></details>`;
