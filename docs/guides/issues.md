@@ -104,7 +104,7 @@ size, the tasks it waits for, and the repository it goes to. The factory itself 
 first:
 
 - at most 8 tasks, each `small` or `medium`, never `large`
-- every acceptance criterion covered by at least one task
+- every acceptance criterion covered by at least one task, or by a step left for a person (below)
 - dependencies that exist and don't form a cycle
 - only repositories the project offers (see [More than one repository](#more-than-one-repository))
 - tasks in different repositories ordered, or a reason they need nothing from each other
@@ -116,7 +116,10 @@ decides, by default an ai checker.
 The factory only changes code and merges it. Steps that need a person or a system outside the
 repositories, such as publishing a release, deploying, or creating a secret or an account, are
 never tasks. The planner lists them under **After this merges, a person needs to** on the plan,
-and the ai plan checker sends back a plan that makes a task wait on one. They're repeated in the
+and the ai plan checker sends back a plan that makes a task wait on one. When an acceptance
+criterion can only be met that way, for example "the compatibility test runs the released
+client", the step names that criterion, and the ai plan checker judges whether it really needs a
+person. They're repeated in the
 `Done` comment, and `factory status <wi>` shows them under `Left for a person`. If a repository's
 own instructions say "release first, then add the test", the test is listed there too, for after
 the release.

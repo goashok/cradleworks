@@ -19,7 +19,7 @@ import {
 import type { AgentRunRequest } from '@cradleworks/interfaces';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ProjectConfig } from '../config/types.ts';
-import { checkPlan, commandsAfter, parsePlan, parseSpecAnswer } from './issue-flow.ts';
+import { checkPlan, commandsAfter, parseFollowUps, parsePlan, parseSpecAnswer } from './issue-flow.ts';
 import { Orchestrator, WorkItemRepository, type Project, type WorkProgress } from './index.ts';
 
 // Tests are the `*acceptance*.sh` scripts plus the checks in `checks/`; each must exit 0.
@@ -331,14 +331,15 @@ describe('issue flow', () => {
   });
 
   it('leaves steps only a person can do as follow-ups, shown on the plan and when the work is done', async () => {
-    const follow = 'Release client 0.2.0, then add its compatibility test.';
+    const follow = 'Release client 0.2.0, then add its compatibility test';
     const o = orchestrator({
       planner: (req) => {
         expect(req.rolePrompt).toContain('A merged change is not a release.');
-        return [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2, 3] }], follow_ups: [follow, '', 42] })];
+        // Criterion 3 only a person can make true: its follow-up covers it, not a task.
+        return [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2] }], follow_ups: [{ step: follow, criteria: [3] }, '', 42] })];
       },
       plan_check: (req) => {
-        expect(req.input).toContain(`## Left for a person after the work merges\n\n- ${follow}`);
+        expect(req.input).toContain(`## Left for a person after the work merges\n\n- ${follow} (acceptance criterion 3)`);
         expect(req.rolePrompt).toContain('such steps belong in the follow-ups for a person');
         return [APPROVED];
       },
@@ -347,7 +348,7 @@ describe('issue flow', () => {
     const ref = issue();
     const { workItemId } = await o.receiveItem(skip, ref);
     expect((await o.runWorkItem(skip, workItemId)).state).toBe('merged');
-    expect((await o.getWorkItem(workItemId))!.followUps).toEqual([follow]);
+    expect((await o.getWorkItem(workItemId))!.followUps).toEqual([`${follow} (acceptance criterion 3)`]);
     const bodies = (await tracker.getItem(ref)).comments.map((c) => c.body);
     expect(bodies.find((b) => b.includes('## Plan:'))).toContain(`**After this merges, a person needs to:**\n\n- ${follow}`);
     expect(bodies.find((b) => b.includes('Done:'))).toContain(`**Still to do, by a person:**\n\n- ${follow}`);
@@ -466,6 +467,18 @@ describe('issue flow parsing', () => {
     const cyclic = plan.map((t) => (t.key === 't1' ? { ...t, dependsOn: ['t3'] } : t));
     expect(checkPlan(cyclic, 3, { main: 'shop', related: [] })).toContain('the dependencies form a cycle');
     expect(checkPlan([{ ...plan[0]!, repo: 'nope' }], 1, { main: 'shop', related: [] })).toContain('task t1 names repo "nope", which is not offered');
+  });
+
+  it('counts a criterion a follow-up leaves for a person as covered', () => {
+    const plan = parsePlan(JSON.stringify(PLAN))!.map((t) => ({ ...t, criteria: t.criteria.filter((c) => c !== 3) }));
+    const repos = { main: 'shop', related: [] };
+    expect(checkPlan(plan, 3, repos)).toEqual(['no task covers criterion 3']);
+    expect(checkPlan(plan, 3, repos, parseFollowUps(JSON.stringify({ tasks: [], follow_ups: [{ step: 'Publish the release', criteria: [3] }] })))).toEqual([]);
+    expect(checkPlan(plan, 3, repos, [{ step: 'x', criteria: [3, 9] }])).toEqual(['a follow-up covers criterion 9, which does not exist']);
+    expect(parseFollowUps('{"tasks": [], "follow_ups": ["Deploy it", {"step": " Tag it ", "criteria": [2, "x"]}, {"criteria": [1]}]}')).toEqual([
+      { step: 'Deploy it', criteria: [] },
+      { step: 'Tag it', criteria: [2] },
+    ]);
   });
 
   it('wants tasks in different repositories ordered, or a reason they need nothing from each other', () => {

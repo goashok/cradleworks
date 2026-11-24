@@ -137,12 +137,12 @@ export function plannerPrompt(contextFiles: string[]): string {
     '- Each task is "small" (an hour of focused work) or "medium" (half a day). Never "large": split it.',
     '- Each task leaves the project building and its tests passing on its own.',
     '- A task that needs another merged first lists it in depends_on. Independent tasks run in parallel, so keep them apart in the code where you can.',
-    '- Every acceptance criterion is covered by at least one task; list the criteria numbers each task covers.',
+    '- Every acceptance criterion is covered by at least one task, or by a follow-up when only a person can make it true; list the criteria numbers each covers.',
     '- The description says what to change, where, and how to tell it is done, including tests to add.',
-    '- Every task must be doable by an agent with only the repositories\' code, in a sandbox. Steps that need a person or a system outside the repositories (publishing or tagging a release, deploying, creating secrets, accounts or infrastructure, a decision only a person can make) are never tasks, and no task may wait on one: the factory merges code, nothing more. A merged change is not a release. List such steps in "follow_ups", in plain words, for a person to do after the work merges, including any task that would have needed them (for example "Release client 0.2.0, then add its compatibility test").',
+    '- Every task must be doable by an agent with only the repositories\' code, in a sandbox. Steps that need a person or a system outside the repositories (publishing or tagging a release, deploying, creating secrets, accounts or infrastructure, a decision only a person can make) are never tasks, and no task may wait on one: the factory merges code, nothing more. A merged change is not a release. List such steps in "follow_ups", in plain words, for a person to do after the work merges, including any task that would have needed them (for example "Release client 0.2.0, then add its compatibility test"), with the acceptance criteria they cover.',
     '',
     'End your final message with exactly one JSON object and nothing after it:',
-    '{"tasks": [{"key": "t1", "title": "…", "description": "…", "size": "small", "depends_on": [], "criteria": [1, 2], "repo": "…"}], "follow_ups": ["…"]}',
+    '{"tasks": [{"key": "t1", "title": "…", "description": "…", "size": "small", "depends_on": [], "criteria": [1, 2], "repo": "…"}], "follow_ups": [{"step": "…", "criteria": [3]}]}',
     'Leave out "follow_ups" when there are none.',
     'Leave out "repo" unless the task belongs in one of the other repositories you are offered.',
     'Leave out "independent" unless the plan has tasks in more than one repository (see the repositories below).',
@@ -163,10 +163,28 @@ export function plannerInput(spec: SpecDocument, repos: { main: string; related:
   return lines.join('\n');
 }
 
+export interface FollowUp {
+  step: string;
+  /** Acceptance criteria only a person can make true, which this step covers instead of a task. */
+  criteria: number[];
+}
+
 /** The steps the planner left for a person, from the same answer as the plan. */
-export function parseFollowUps(text: string | undefined): string[] {
-  const found = extractJson(text, (v) => (Array.isArray(v.tasks) ? (Array.isArray(v.follow_ups) ? v.follow_ups : []) : undefined));
-  return (found ?? []).filter((f): f is string => typeof f === 'string' && f.trim() !== '').map((f) => f.trim()).slice(0, 10);
+export function parseFollowUps(text: string | undefined): FollowUp[] {
+  const found = extractJson(text, (v) => (Array.isArray(v.tasks) ? (Array.isArray(v.follow_ups) ? (v.follow_ups as unknown[]) : []) : undefined));
+  const out: FollowUp[] = [];
+  for (const f of found ?? []) {
+    const raw = typeof f === 'string' ? { step: f } : typeof f === 'object' && f !== null ? (f as Record<string, unknown>) : {};
+    const step = typeof raw.step === 'string' ? raw.step.trim() : '';
+    if (!step) continue;
+    out.push({ step, criteria: Array.isArray(raw.criteria) ? raw.criteria.filter((c): c is number => Number.isInteger(c)) : [] });
+  }
+  return out.slice(0, 10);
+}
+
+/** A follow-up as it's kept and shown: the step, and the criteria it stands for. */
+export function followUpText(f: FollowUp): string {
+  return f.criteria.length ? `${f.step} (acceptance criteri${f.criteria.length > 1 ? 'a' : 'on'} ${f.criteria.join(', ')})` : f.step;
 }
 
 /** Markdown for the steps a person does after the work merges; '' when there are none. */
@@ -198,7 +216,7 @@ export function parsePlan(text: string | undefined): PlanDraftTask[] | undefined
 }
 
 /** What's wrong with a plan, by the rules every plan must keep. Empty = fine. */
-export function checkPlan(tasks: PlanDraftTask[], criteriaCount: number, repos: { main: string; related: string[] }): string[] {
+export function checkPlan(tasks: PlanDraftTask[], criteriaCount: number, repos: { main: string; related: string[] }, followUps: FollowUp[] = []): string[] {
   const problems: string[] = [];
   if (tasks.length === 0) return ['the plan has no tasks'];
   if (tasks.length > MAX_TASKS) problems.push(`the plan has ${tasks.length} tasks; at most ${MAX_TASKS}`);
@@ -216,7 +234,8 @@ export function checkPlan(tasks: PlanDraftTask[], criteriaCount: number, repos: 
   for (const t of tasks) for (const d of t.dependsOn) if (!keys.has(d)) problems.push(`task ${t.key} depends on unknown task ${d}`);
   if (hasCycle(tasks)) problems.push('the dependencies form a cycle');
   else problems.push(...unorderedAcrossRepos(tasks, repos.main));
-  const covered = new Set(tasks.flatMap((t) => t.criteria));
+  for (const f of followUps) for (const c of f.criteria) if (c < 1 || c > criteriaCount) problems.push(`a follow-up covers criterion ${c}, which does not exist`);
+  const covered = new Set([...tasks.flatMap((t) => t.criteria), ...followUps.flatMap((f) => f.criteria)]);
   const missing = Array.from({ length: criteriaCount }, (_, i) => i + 1).filter((c) => !covered.has(c));
   if (missing.length) problems.push(`no task covers criteri${missing.length > 1 ? 'a' : 'on'} ${missing.join(', ')}`);
   return problems;
@@ -279,7 +298,7 @@ export function checkerPrompt(what: 'spec' | 'plan'): string {
   const looks =
     what === 'spec'
       ? ['- every acceptance criterion is observable and testable', '- the spec answers what the requester asked, no less and no more', '- the assumptions are reasonable, or would a requester likely disagree?', '- nothing contradicts the existing code or the project rules']
-      : ['- following the tasks in order makes every acceptance criterion true', '- each task is small enough for one focused pull request and leaves the project working', '- dependencies are right: nothing builds on work that is not merged first', '- no task does work the spec does not ask for', '- no task needs a step only a person or an outside system can do (publishing a release, deploying, creating secrets or accounts): such steps belong in the follow-ups for a person, not in a task'];
+      : ['- following the tasks in order makes every acceptance criterion true, except those a follow-up leaves for a person, and each of those really needs a person', '- each task is small enough for one focused pull request and leaves the project working', '- dependencies are right: nothing builds on work that is not merged first', '- no task does work the spec does not ask for', '- no task needs a step only a person or an outside system can do (publishing a release, deploying, creating secrets or accounts): such steps belong in the follow-ups for a person, not in a task'];
   return [
     `You check a ${what} in a software factory before ${what === 'spec' ? 'any code is planned' : 'any code is written'}. You work in a read-only checkout of the project; read what you need, change nothing.`,
     '',

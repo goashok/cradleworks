@@ -67,6 +67,8 @@ import {
   parseSpecAnswer,
   planComment,
   parseFollowUps,
+  followUpText,
+  type FollowUp,
   followUpsMarkdown,
   plannerInput,
   plannerPrompt,
@@ -853,7 +855,7 @@ export class Orchestrator {
     await log.write({ type: 'run_context', workItemId, taskId: workItemId, station: 'plan' });
 
     let draft: PlanDraftTask[] | undefined;
-    let followUps: string[] = [];
+    let followUps: FollowUp[] = [];
     let problems: string[] = [];
     for (let attempt = 1; attempt <= 2; attempt++) {
       const done = await this.#inspect(project, wi, runId, log, {
@@ -869,7 +871,7 @@ export class Orchestrator {
       }
       draft = parsePlan(done.summary);
       followUps = parseFollowUps(done.summary);
-      problems = draft ? checkPlan(draft, spec.acceptanceCriteria.length, repos) : ['the answer had no JSON plan'];
+      problems = draft ? checkPlan(draft, spec.acceptanceCriteria.length, repos, followUps) : ['the answer had no JSON plan'];
       await log.write({ type: 'plan_checked', attempt, problems });
       if (problems.length === 0) break;
     }
@@ -888,7 +890,7 @@ export class Orchestrator {
       ...(t.repo && t.repo !== repos.main ? { repo: t.repo } : {}),
     }));
     await this.#emit(workItemId, [
-      { type: 'tasks_planned', at: this.#clock(), tasks, ...(followUps.length ? { followUps } : {}) },
+      { type: 'tasks_planned', at: this.#clock(), tasks, ...(followUps.length ? { followUps: followUps.map(followUpText) } : {}) },
       { type: 'run_ended', at: this.#clock(), runId, outcome: 'succeeded' },
     ]);
     const after = await this.#mustLoad(workItemId);
