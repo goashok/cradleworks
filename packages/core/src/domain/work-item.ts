@@ -108,6 +108,8 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       if (hasCycle(event.tasks)) fail('task dependencies must not form a cycle');
       const specId = wi.spec?.specId ?? fail('no approved spec');
       wi.proposedTasks = event.tasks.map((t) => newTask(t.taskId, specId, t.title, t.dependsOn, t.size, t.description, t.repo));
+      if (event.followUps?.length) wi.followUps = [...event.followUps];
+      else delete wi.followUps;
       return;
     }
 

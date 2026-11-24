@@ -196,6 +196,8 @@ export interface WorkItem {
   specQuestions?: string[];
   /** Plan awaiting the plan check; moved to `tasks` once approved. */
   proposedTasks: Task[];
+  /** Steps the latest plan leaves for a person after the work merges, such as publishing a release. */
+  followUps?: string[];
   /** Model spend on the work item so far, its own agents and its tasks'. */
   spentUsd: number;
   tasks: Task[];

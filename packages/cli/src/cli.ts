@@ -873,6 +873,7 @@ function describe(wi: WorkItem): string {
     const agent = r.agentProfile ? `  ${r.agentProfile.agent}/${r.agentProfile.model}` : '';
     lines.push(`  ${r.id}  ${r.station}  ${r.outcome ?? 'running'}  ${r.startedAt}${agent}`);
   }
+  if (wi.followUps?.length) lines.push('', 'Left for a person', ...wi.followUps.map((f) => `  - ${f}`));
   lines.push('', 'Gates');
   for (const g of wi.gateDecisions) lines.push(`  ${g.gate}  ${g.verdict} (${g.mode}) by ${g.decidedBy}`);
   return `${lines.join('\n')}\n`;

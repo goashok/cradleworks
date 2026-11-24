@@ -66,6 +66,8 @@ import {
   parsePlan,
   parseSpecAnswer,
   planComment,
+  parseFollowUps,
+  followUpsMarkdown,
   plannerInput,
   plannerPrompt,
   questionsComment,
@@ -851,6 +853,7 @@ export class Orchestrator {
     await log.write({ type: 'run_context', workItemId, taskId: workItemId, station: 'plan' });
 
     let draft: PlanDraftTask[] | undefined;
+    let followUps: string[] = [];
     let problems: string[] = [];
     for (let attempt = 1; attempt <= 2; attempt++) {
       const done = await this.#inspect(project, wi, runId, log, {
@@ -865,6 +868,7 @@ export class Orchestrator {
         break;
       }
       draft = parsePlan(done.summary);
+      followUps = parseFollowUps(done.summary);
       problems = draft ? checkPlan(draft, spec.acceptanceCriteria.length, repos) : ['the answer had no JSON plan'];
       await log.write({ type: 'plan_checked', attempt, problems });
       if (problems.length === 0) break;
@@ -884,13 +888,13 @@ export class Orchestrator {
       ...(t.repo && t.repo !== repos.main ? { repo: t.repo } : {}),
     }));
     await this.#emit(workItemId, [
-      { type: 'tasks_planned', at: this.#clock(), tasks },
+      { type: 'tasks_planned', at: this.#clock(), tasks, ...(followUps.length ? { followUps } : {}) },
       { type: 'run_ended', at: this.#clock(), runId, outcome: 'succeeded' },
     ]);
     const after = await this.#mustLoad(workItemId);
     const mode = this.#gateMode(after, 'plan_check', project.config.gates.planCheck);
     const attempt = after.gateDecisions.filter((d) => d.gate === 'plan_check').length + 1;
-    await this.#say(wi.source, planComment(after.proposedTasks, mode, attempt), true);
+    await this.#say(wi.source, planComment(after.proposedTasks, mode, attempt, after.followUps), true);
     onProgress({ kind: 'planned', tasks: after.proposedTasks.map((t) => ({ id: t.id, title: t.title, dependsOn: t.dependsOn })) });
   }
 
@@ -1008,7 +1012,8 @@ export class Orchestrator {
       const plan = wi.proposedTasks
         .map((t) => `### ${name.get(t.id)}: ${t.title} (${t.size}${t.dependsOn.length ? `, after ${t.dependsOn.map((d) => name.get(d)).join(', ')}` : ''}${t.repo ? `, in ${t.repo}` : ''})\n\n${t.description ?? ''}`)
         .join('\n\n');
-      const check = await this.#check(project, wi, 'plan', `# Plan check\n\n## The spec: ${doc.title}\n\n${specBody(doc)}\n\n## The plan\n\n${plan}`, onProgress);
+      const followUps = wi.followUps?.length ? `\n\n## Left for a person after the work merges\n\n${wi.followUps.map((f) => `- ${f}`).join('\n')}` : '';
+      const check = await this.#check(project, wi, 'plan', `# Plan check\n\n## The spec: ${doc.title}\n\n${specBody(doc)}\n\n## The plan\n\n${plan}${followUps}`, onProgress);
       if (!check) return false;
       await this.#decidePlan(wi, { mode, verdict: check.verdict, decidedBy: check.by, reason: check.reasons.join(' ') || 'the plan check passed' }, onProgress);
       await this.#say(wi.source, checkComment('Plan', check));
@@ -1510,7 +1515,7 @@ export class Orchestrator {
     const merged = wi.tasks.filter((t) => t.state === 'merged');
     const text =
       wi.state === 'merged'
-        ? `Done: ${merged.length} pull request${merged.length > 1 ? 's' : ''} merged.\n\n${merged.map((t) => `- ${t.title}${t.pr ? `: ${t.pr.url}` : ''}`).join('\n')}`
+        ? `Done: ${merged.length} pull request${merged.length > 1 ? 's' : ''} merged.\n\n${merged.map((t) => `- ${t.title}${t.pr ? `: ${t.pr.url}` : ''}`).join('\n')}${wi.followUps?.length ? `\n\n${followUpsMarkdown(wi.followUps, 'Still to do, by a person')}` : ''}`
         : `Stopped: ${wi.state}${wi.endReason ? ` (${wi.endReason})` : ''}.`;
     await this.#say(wi.source, `${tag}\n${text}`);
   }

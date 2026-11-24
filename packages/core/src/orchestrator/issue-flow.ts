@@ -139,9 +139,11 @@ export function plannerPrompt(contextFiles: string[]): string {
     '- A task that needs another merged first lists it in depends_on. Independent tasks run in parallel, so keep them apart in the code where you can.',
     '- Every acceptance criterion is covered by at least one task; list the criteria numbers each task covers.',
     '- The description says what to change, where, and how to tell it is done, including tests to add.',
+    '- Every task must be doable by an agent with only the repositories\' code, in a sandbox. Steps that need a person or a system outside the repositories (publishing or tagging a release, deploying, creating secrets, accounts or infrastructure, a decision only a person can make) are never tasks, and no task may wait on one: the factory merges code, nothing more. A merged change is not a release. List such steps in "follow_ups", in plain words, for a person to do after the work merges, including any task that would have needed them (for example "Release client 0.2.0, then add its compatibility test").',
     '',
     'End your final message with exactly one JSON object and nothing after it:',
-    '{"tasks": [{"key": "t1", "title": "…", "description": "…", "size": "small", "depends_on": [], "criteria": [1, 2], "repo": "…"}]}',
+    '{"tasks": [{"key": "t1", "title": "…", "description": "…", "size": "small", "depends_on": [], "criteria": [1, 2], "repo": "…"}], "follow_ups": ["…"]}',
+    'Leave out "follow_ups" when there are none.',
     'Leave out "repo" unless the task belongs in one of the other repositories you are offered.',
     'Leave out "independent" unless the plan has tasks in more than one repository (see the repositories below).',
   ].join('\n');
@@ -159,6 +161,17 @@ export function plannerInput(spec: SpecDocument, repos: { main: string; related:
   if (context.rejection) lines.push('', '## Why the previous plan was sent back', context.rejection);
   if (context.problems?.length) lines.push('', '## Problems with your previous answer', ...context.problems.map((p) => `- ${p}`), '', 'Answer again with a plan that fixes them.');
   return lines.join('\n');
+}
+
+/** The steps the planner left for a person, from the same answer as the plan. */
+export function parseFollowUps(text: string | undefined): string[] {
+  const found = extractJson(text, (v) => (Array.isArray(v.tasks) ? (Array.isArray(v.follow_ups) ? v.follow_ups : []) : undefined));
+  return (found ?? []).filter((f): f is string => typeof f === 'string' && f.trim() !== '').map((f) => f.trim()).slice(0, 10);
+}
+
+/** Markdown for the steps a person does after the work merges; '' when there are none. */
+export function followUpsMarkdown(followUps: string[] | undefined, heading = 'After this merges, a person needs to'): string {
+  return followUps?.length ? [`**${heading}:**`, '', ...followUps.map((f) => `- ${f}`)].join('\n') : '';
 }
 
 export function parsePlan(text: string | undefined): PlanDraftTask[] | undefined {
@@ -266,7 +279,7 @@ export function checkerPrompt(what: 'spec' | 'plan'): string {
   const looks =
     what === 'spec'
       ? ['- every acceptance criterion is observable and testable', '- the spec answers what the requester asked, no less and no more', '- the assumptions are reasonable, or would a requester likely disagree?', '- nothing contradicts the existing code or the project rules']
-      : ['- following the tasks in order makes every acceptance criterion true', '- each task is small enough for one focused pull request and leaves the project working', '- dependencies are right: nothing builds on work that is not merged first', '- no task does work the spec does not ask for'];
+      : ['- following the tasks in order makes every acceptance criterion true', '- each task is small enough for one focused pull request and leaves the project working', '- dependencies are right: nothing builds on work that is not merged first', '- no task does work the spec does not ask for', '- no task needs a step only a person or an outside system can do (publishing a release, deploying, creating secrets or accounts): such steps belong in the follow-ups for a person, not in a task'];
   return [
     `You check a ${what} in a software factory before ${what === 'spec' ? 'any code is planned' : 'any code is written'}. You work in a read-only checkout of the project; read what you need, change nothing.`,
     '',
@@ -394,7 +407,7 @@ export function specComment(spec: SpecDocument, mode: 'human' | 'ai' | 'skipped'
   return [gateTag('spec', spec.version), `## Spec, version ${spec.version}: ${spec.title}`, '', specBody(spec), '', `_${how}_`].join('\n');
 }
 
-export function planComment(tasks: Array<{ id: string; title: string; size: string; dependsOn: string[]; repo?: string }>, mode: 'human' | 'ai' | 'skipped', attempt: number): string {
+export function planComment(tasks: Array<{ id: string; title: string; size: string; dependsOn: string[]; repo?: string }>, mode: 'human' | 'ai' | 'skipped', attempt: number, followUps?: string[]): string {
   const name = new Map(tasks.map((t, i) => [t.id, `T${i + 1}`]));
   const how =
     mode === 'human'
@@ -404,6 +417,8 @@ export function planComment(tasks: Array<{ id: string; title: string; size: stri
         : 'The plan check is skipped for this project; building starts now.';
   const lines = [gateTag('plan', attempt), `## Plan: ${tasks.length} task${tasks.length > 1 ? 's' : ''}`, '', '| | Task | Size | After | Repo |', '| --- | --- | --- | --- | --- |'];
   for (const t of tasks) lines.push(`| ${name.get(t.id)} | ${t.title} | ${t.size} | ${t.dependsOn.map((d) => name.get(d)).join(', ') || '—'} | ${t.repo ?? 'this one'} |`);
+  const after = followUpsMarkdown(followUps);
+  if (after) lines.push('', after);
   lines.push('', `_Each task becomes one pull request. Tasks with nothing in "After" start in parallel. ${how}_`);
   return lines.join('\n');
 }

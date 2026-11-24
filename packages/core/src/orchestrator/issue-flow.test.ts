@@ -330,6 +330,29 @@ describe('issue flow', () => {
     await expect(file(bare, 'main', 'summary.txt')).rejects.toThrow();
   });
 
+  it('leaves steps only a person can do as follow-ups, shown on the plan and when the work is done', async () => {
+    const follow = 'Release client 0.2.0, then add its compatibility test.';
+    const o = orchestrator({
+      planner: (req) => {
+        expect(req.rolePrompt).toContain('A merged change is not a release.');
+        return [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2, 3] }], follow_ups: [follow, '', 42] })];
+      },
+      plan_check: (req) => {
+        expect(req.input).toContain(`## Left for a person after the work merges\n\n- ${follow}`);
+        expect(req.rolePrompt).toContain('such steps belong in the follow-ups for a person');
+        return [APPROVED];
+      },
+    });
+    const skip = { ...project, config: { ...baseConfig, gates: { ...baseConfig.gates, specApproval: 'skipped' as const } } };
+    const ref = issue();
+    const { workItemId } = await o.receiveItem(skip, ref);
+    expect((await o.runWorkItem(skip, workItemId)).state).toBe('merged');
+    expect((await o.getWorkItem(workItemId))!.followUps).toEqual([follow]);
+    const bodies = (await tracker.getItem(ref)).comments.map((c) => c.body);
+    expect(bodies.find((b) => b.includes('## Plan:'))).toContain(`**After this merges, a person needs to:**\n\n- ${follow}`);
+    expect(bodies.find((b) => b.includes('Done:'))).toContain(`**Still to do, by a person:**\n\n- ${follow}`);
+  });
+
   it('builds on the branch the issue names', async () => {
     await git(['--git-dir', bare, 'branch', 'release/2', 'main']);
     const o = orchestrator({ planner: () => [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2, 3] }] })] });

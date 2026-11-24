@@ -107,10 +107,19 @@ first:
 - every acceptance criterion covered by at least one task
 - dependencies that exist and don't form a cycle
 - only repositories the project offers (see [More than one repository](#more-than-one-repository))
+- tasks in different repositories ordered, or a reason they need nothing from each other
 
 A plan that breaks these rules goes back to the planner once, with the problems listed. If the
 second plan breaks them too, the work item stops as blocked. After that the plan check gate
 decides, by default an ai checker.
+
+The factory only changes code and merges it. Steps that need a person or a system outside the
+repositories, such as publishing a release, deploying, or creating a secret or an account, are
+never tasks. The planner lists them under **After this merges, a person needs to** on the plan,
+and the ai plan checker sends back a plan that makes a task wait on one. They're repeated in the
+`Done` comment, and `factory status <wi>` shows them under `Left for a person`. If a repository's
+own instructions say "release first, then add the test", the test is listed there too, for after
+the release.
 
 **The tasks.** Each task is built and verified exactly as in
 [Verify, rework and approve](verify-and-approve.md), and becomes its own pull request. The PR
@@ -124,8 +133,8 @@ Approve it on the PR (or `factory approve <task>`), and merge it yourself or wit
 that were waiting for it.
 
 **Done.** When every task has merged, the factory comments `Done: 3 pull requests merged` with
-the list and labels the issue `factory:merged`. The issue itself stays open, so close it when
-you're happy.
+the list, and anything left for a person, and labels the issue `factory:merged`. The issue itself
+stays open, so close it when you're happy.
 
 ## Write an issue, review a spec
 

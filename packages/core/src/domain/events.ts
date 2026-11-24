@@ -45,7 +45,8 @@ export type WorkItemEvent =
       verdict: GateVerdict;
       reason: string;
     })
-  | (Base & { type: 'tasks_planned'; tasks: PlannedTask[] })
+  /** `followUps`: steps the plan leaves for a person after the work merges, such as a release. */
+  | (Base & { type: 'tasks_planned'; tasks: PlannedTask[]; followUps?: string[] })
   | (Base & { type: 'task_started'; taskId: string; branch: string })
   | (Base & { type: 'task_pr_opened'; taskId: string; pr: ExternalRef })
   /** `protectedPaths`: files the change touches that only a person may approve and merge. */
