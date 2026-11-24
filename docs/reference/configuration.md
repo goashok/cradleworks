@@ -123,7 +123,7 @@ Don't list them yourself.
 | `concurrency` | integer ≥ 1 | `2` | ✅ | How many of a work item's tasks may build and verify at once, and how many work items `factory watch` moves at once. `submit` builds its one task. |
 | `verify.tester` | boolean | `true` | ✅ | For work from issues: a tester agent writes acceptance tests from the spec, and Verify runs them as the `acceptance` check. |
 | `verify.agent_checks.<name>` | mapping | none | ✅ | A further reviewer in Verify with one focus: `skill` (required, in `.factory/skills/`), `blocks` (default `false`), `max_share` (of `per_task_usd` per Verify run, above 0 and at most 1; default `0.25`), and optional `agent` and `model`. A blocking check runs as advisory until `.factory/drill/<name>/` has a known-bad case. See [Agent checks](../guides/verify-and-approve.md#agent-checks). |
-| `related_repos` | list of paths | `[]` | ✅ | Other checkouts, as paths from this repo, that the planner may give tasks to. Each needs its own `.factory/factory.yaml` and the same `scm`. |
+| `related_repos` | list of paths | `[]` | ✅ | Other checkouts, as paths from this repo, that the planner may give tasks to. Each needs its own `.factory/factory.yaml` and the same `scm`. Issues that span them are opened in this repo. See [More than one repository](../guides/issues.md#more-than-one-repository). |
 | `protected_paths` | list of paths | `[]` | ✅ | More paths whose changes need a person at the change gate and are never merged automatically. A trailing `/` means everything under it. CI config, `.factory/` and `CODEOWNERS` are always protected; this can't remove them. |
 
 ## Environment variables

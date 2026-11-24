@@ -110,6 +110,11 @@ export interface Evidence {
   factoryConfig?: string;
   /** The project's agent checks (`verify.agent_checks`), in config order. */
   agentChecks?: AgentCheckResult[];
+  /**
+   * The change as verified, kept only when a task in another repository depends on this one,
+   * so that task can see what it builds on. At most 100,000 characters.
+   */
+  change?: { patch: string; truncated?: boolean };
   verdict: VerifyVerdict;
   /** One line, for status and the event log. */
   reason: string;

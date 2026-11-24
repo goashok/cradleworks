@@ -71,6 +71,12 @@ export function formatEvent(event: StoredEvent, options: LogOptions = {}): strin
       const shown = files.map((f) => `${f.kind === 'prompt' ? 'prompt addition ' : f.kind === 'skill' ? `skill (${(f as { load?: string }).load ?? 'on-demand'}${(f as { lock?: string }).lock && (f as { lock?: string }).lock !== 'ok' ? `, ${(f as { lock?: string }).lock}` : ''}) ` : ''}${f.path}${hash(f)}`);
       return line('context', `${p.role ? `${String(p.role)}: ` : ''}${shown.join(', ')}${dropped.length ? ` (${dropped.length} dropped)` : ''}`);
     }
+    case 'upstream_given': {
+      const tasks = (p.tasks as Array<{ taskId: string; repo: string; patch: boolean }> | undefined) ?? [];
+      return line('builds on', tasks.map((t) => `${t.taskId} in ${t.repo}${t.patch ? '' : ' (no change kept)'}`).join(', '));
+    }
+    case 'upstream_missing':
+      return line('builds on', `${String(p.taskId ?? '')} in ${String(p.repo ?? '')} not given: ${p.error ? String(p.error) : 'not a related repository here'}`);
     case 'agent_started': {
       const limits = p.limits as { maxWallSeconds?: number; maxSpendUsd?: number } | undefined;
       return line('agent', `${String(p.agent ?? '')} ${String(p.model ?? '')}, limits ${limits?.maxWallSeconds ?? '-'}s / ${money(limits?.maxSpendUsd) || '-'}`);

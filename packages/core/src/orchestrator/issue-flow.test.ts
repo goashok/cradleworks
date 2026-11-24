@@ -2,7 +2,7 @@
 // round), passes the spec gate, is planned into dependent tasks that run in parallel, is
 // verified with the tester's acceptance tests, and merges.
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -277,13 +277,57 @@ describe('issue flow', () => {
       },
       planner: (req) => {
         expect(req.input).toContain('`client`: a related repository');
-        return [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2] }, { ...PLAN.tasks[1], key: 't2', repo: 'client', criteria: [3] }] })];
+        return [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2] }, { ...PLAN.tasks[1], key: 't2', repo: 'client', criteria: [3], independent: 'The summary is unrelated to the export.' }] })];
       },
     });
     const { workItemId } = await o.receiveItem(withClient, issue());
     expect((await o.runWorkItem(withClient, workItemId)).state).toBe('merged');
     expect(await file(bare, 'main', 'export.txt')).toBe('export.txt\n');
     expect(await file(clientBare, 'main', 'summary.txt')).toBe('summary.txt\n');
+  });
+
+  it('gives a task the change it builds on in another repository, and keeps each task in its own', async () => {
+    const clientBare = join(root, 'client.git');
+    await createBareRepo(clientBare, { 'README.md': '# Client\n' });
+    const client: Project = { repo: localRepoRef(clientBare), config: { ...baseConfig, project: 'client', gates: { ...baseConfig.gates, changeApproval: 'human' } } };
+    const withClient = { ...project, config: { ...baseConfig, gates: { ...baseConfig.gates, specApproval: 'skipped' as const } }, related: { client } };
+    let seen: { input: string; patch: string; checkout: string[] } | undefined;
+    const o = orchestrator({
+      planner: (req) => {
+        expect(req.input).toContain('list that task in its depends_on');
+        return [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2] }, { ...PLAN.tasks[1], key: 't2', repo: 'client', depends_on: ['t1'], criteria: [3] }] })];
+      },
+      implementer: (req) => {
+        const title = /^# (.*)$/m.exec(req.input)?.[1] ?? '';
+        if (title === 'Write summary') {
+          const up = join(req.sandbox.contextPath, 'upstream');
+          const [patch] = readdirSync(join(up, 'changes'));
+          seen = { input: req.input, patch: readFileSync(join(up, 'changes', patch!), 'utf8'), checkout: readdirSync(join(up, 'repos', 'shop')) };
+        }
+        return [{ kind: 'message', text: `Did ${title}.` }, write(FILE[title] ?? 'other.txt')];
+      },
+    });
+    const { workItemId } = await o.receiveItem(withClient, issue());
+    // The client's change gate waits for a person; the shop's task has merged by then.
+    await o.runWorkItem(withClient, workItemId);
+    const wi = (await o.getWorkItem(workItemId))!;
+    const [shopTask, clientTask] = wi.tasks;
+    expect(shopTask).toMatchObject({ state: 'merged' });
+    expect(shopTask!.evidence?.change?.patch).toContain('+export.txt');
+    expect(clientTask).toMatchObject({ state: 'ready', repo: 'client' });
+
+    expect(seen?.input).toContain('## Work in other repositories this task builds on');
+    expect(seen?.input).toContain('**Write export**, merged in `shop`');
+    expect(seen?.patch).toContain('+export.txt');
+    expect(seen?.checkout).toContain('export.txt');
+    // The reviewer of the client's change is shown it too.
+    const review = requests.filter((r) => r.profile.role === 'reviewer' && r.input.includes('Write summary')).at(-1);
+    expect(review?.input).toContain('## Work in other repositories this task builds on');
+
+    // Approved through the work item's own project, it merges in the client's repository.
+    expect((await o.approveTask(withClient, workItemId, clientTask!.id, { by: 'sam' })).merged).toBeTruthy();
+    expect(await file(clientBare, 'main', 'summary.txt')).toBe('summary.txt\n');
+    await expect(file(bare, 'main', 'summary.txt')).rejects.toThrow();
   });
 
   it('builds on the branch the issue names', async () => {
@@ -399,6 +443,22 @@ describe('issue flow parsing', () => {
     const cyclic = plan.map((t) => (t.key === 't1' ? { ...t, dependsOn: ['t3'] } : t));
     expect(checkPlan(cyclic, 3, { main: 'shop', related: [] })).toContain('the dependencies form a cycle');
     expect(checkPlan([{ ...plan[0]!, repo: 'nope' }], 1, { main: 'shop', related: [] })).toContain('task t1 names repo "nope", which is not offered');
+  });
+
+  it('wants tasks in different repositories ordered, or a reason they need nothing from each other', () => {
+    const plan = parsePlan(JSON.stringify(PLAN))!;
+    const repos = { main: 'shop', related: ['client'] };
+    // t2 in the client, unordered with t1: flagged. t3 depends on both, so it's fine.
+    const split = plan.map((t) => (t.key === 't2' ? { ...t, repo: 'client' } : t));
+    expect(checkPlan(split, 3, repos)).toEqual([
+      'tasks t1 (shop) and t2 (client) are in different repositories and neither depends on the other: add the dependency, or say in "independent" why they need nothing from each other',
+    ]);
+    expect(checkPlan(split.map((t) => (t.key === 't2' ? { ...t, dependsOn: ['t1'] } : t)), 3, repos)).toEqual([]);
+    const reasoned = parsePlan(JSON.stringify({ tasks: PLAN.tasks.map((t) => (t.key === 't2' ? { ...t, repo: 'client', independent: 'Only touches the client docs.' } : t)) }))!;
+    expect(reasoned.find((t) => t.key === 't2')?.independent).toBe('Only touches the client docs.');
+    expect(checkPlan(reasoned, 3, repos)).toEqual([]);
+    // Ordered through another task counts: t3 (client) after t1 and t2, both in the shop.
+    expect(checkPlan(plan.map((t) => (t.key === 't3' ? { ...t, repo: 'client' } : t)), 3, repos)).toEqual([]);
   });
 
   it('finds gate commands after the factory\'s prompt only', () => {

@@ -40,6 +40,9 @@ export type RunLogEntry =
   | { type: 'tests_reviewed'; verdict: 'revised' | 'upheld'; reasons: string[]; files: string[] }
   | { type: 'secrets_found'; findings: Array<{ file: string; line: number; kind: string }> }
   | { type: 'protected_paths_changed'; paths: string[] }
+  /** The tasks in other repositories this one builds on, given to the agent to read. */
+  | { type: 'upstream_given'; tasks: Array<{ taskId: string; repo: string; patch: boolean }> }
+  | { type: 'upstream_missing'; taskId: string; repo: string; error?: string }
   | { type: 'command_denied'; tool: string; detail: string }
   | { type: 'network_decisions'; allowed: number; denied: number; decisions: NetworkDecision[] };
 

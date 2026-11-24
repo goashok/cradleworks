@@ -229,8 +229,47 @@ related_repos: [../ref-notifications-client]
 Each must be a checkout with its own `.factory/factory.yaml` and the same `scm`. The planner is
 told about them by project name and may give a task to one. That task is built, verified and
 merged in its own repository, with that repository's image, commands, rules and gates. It still
-appears in this issue's plan and progress. The issue is only ever watched in the repository
-where it was opened.
+appears in this issue's plan and progress.
+
+### Where to open the issue
+
+Open it in the repository whose `related_repos` lists the others, and run `factory watch` there.
+The issue is only ever watched in the repository where it was opened, so the spec, its approval
+and the progress all stay on that one issue. `/approve` on the spec counts from people with write
+access to that repository; each task's pull request is still approved under its own repository's
+change gate, by that repository's people.
+
+`related_repos` works one way: if the service lists the client, an issue in the service can give
+tasks to the client, not the other way round. Two common setups:
+
+- **One home repository.** Usually the one that owns the contract, such as the service. It lists
+  the others, and every issue that spans them is opened there.
+- **Either repository.** Each lists the other, and `factory watch ../service ../client` watches
+  both. Open the issue wherever it starts.
+
+### Tasks that build on each other
+
+When a task uses what a task in another repository adds (an endpoint, a field, a message), the
+planner makes it depend on that task. It then starts only after that change merges, and its
+implementer and reviewer are given, to read:
+
+- the change itself, as Verify passed it;
+- the other repository as it is after the merge.
+
+So the client's implementer sees the endpoint the service actually added, not only the plan's
+description of it. `factory log` shows this as a `builds on` line.
+
+Tasks in different repositories that don't depend on each other run in parallel. The plan check
+refuses such a pair unless the planner says why they need nothing from each other; the reason is
+in the task's description, where the plan check and you can judge it.
+
+### What it doesn't do yet
+
+- Each repository's Verify runs only its own build and tests. Nothing runs the two sides together
+  before merging, so a mismatch only shows if one side has a test that catches it.
+- Tasks merge one at a time. If the service's change merges and the client's task then escalates,
+  the service's change stays merged; nothing rolls it back.
+- Every repository must be a checkout on the machine that runs the factory.
 
 ## Working from another branch
 

@@ -92,6 +92,11 @@ Not scheduled; each becomes a milestone when it is planned.
   permission the tracker applies to `/approve` (only people who may merge can decide a gate). Until
   then, a team's shared view is the issue and its pull requests.
 
+- **Changes across repositories that work together.** A task that builds on a change in another
+  repository now sees it, and the plan check wants such tasks ordered. Still missing: a check
+  that runs the repositories together before the last of them merges, and holding every task's
+  change until the whole work item passes, so half a feature never merges.
+
 ## Open questions
 
 - Is the tester worth its cost? The M3 eval compares Verify with and without it.

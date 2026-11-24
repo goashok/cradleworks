@@ -120,6 +120,8 @@ export interface PlanDraftTask {
   /** 1-based acceptance criteria this task makes true. */
   criteria: number[];
   repo?: string;
+  /** Why this task needs nothing from the tasks in other repositories it isn't ordered with. */
+  independent?: string;
 }
 
 export function plannerPrompt(contextFiles: string[]): string {
@@ -141,12 +143,19 @@ export function plannerPrompt(contextFiles: string[]): string {
     'End your final message with exactly one JSON object and nothing after it:',
     '{"tasks": [{"key": "t1", "title": "…", "description": "…", "size": "small", "depends_on": [], "criteria": [1, 2], "repo": "…"}]}',
     'Leave out "repo" unless the task belongs in one of the other repositories you are offered.',
+    'Leave out "independent" unless the plan has tasks in more than one repository (see the repositories below).',
   ].join('\n');
 }
 
 export function plannerInput(spec: SpecDocument, repos: { main: string; related: string[] }, context: { rejection?: string; problems?: string[] }): string {
   const lines = [`# Spec: ${spec.title}`, '', specBody(spec), '', '## Repositories', `- \`${repos.main}\`: the one checked out here (default)`];
   for (const r of repos.related) lines.push(`- \`${r}\`: a related repository; give a task to it with "repo": "${r}"`);
+  if (repos.related.length) {
+    lines.push(
+      '',
+      'Tasks in different repositories run in parallel unless one depends on the other. When a task uses what a task in another repository adds (an endpoint, a field, a message, a type), list that task in its depends_on: it then starts after that change merges, and sees it. Only when two tasks in different repositories truly need nothing from each other, leave them unordered and say why in "independent" on one of them.',
+    );
+  }
   if (context.rejection) lines.push('', '## Why the previous plan was sent back', context.rejection);
   if (context.problems?.length) lines.push('', '## Problems with your previous answer', ...context.problems.map((p) => `- ${p}`), '', 'Answer again with a plan that fixes them.');
   return lines.join('\n');
@@ -168,6 +177,7 @@ export function parsePlan(text: string | undefined): PlanDraftTask[] | undefined
         dependsOn: Array.isArray(t.depends_on) ? t.depends_on.filter((d): d is string => typeof d === 'string') : [],
         criteria: Array.isArray(t.criteria) ? t.criteria.filter((c): c is number => Number.isInteger(c)) : [],
         ...(typeof t.repo === 'string' && t.repo.trim() ? { repo: t.repo.trim() } : {}),
+        ...(typeof t.independent === 'string' && t.independent.trim() ? { independent: t.independent.trim() } : {}),
       });
     }
     return tasks;
@@ -192,9 +202,42 @@ export function checkPlan(tasks: PlanDraftTask[], criteriaCount: number, repos: 
   }
   for (const t of tasks) for (const d of t.dependsOn) if (!keys.has(d)) problems.push(`task ${t.key} depends on unknown task ${d}`);
   if (hasCycle(tasks)) problems.push('the dependencies form a cycle');
+  else problems.push(...unorderedAcrossRepos(tasks, repos.main));
   const covered = new Set(tasks.flatMap((t) => t.criteria));
   const missing = Array.from({ length: criteriaCount }, (_, i) => i + 1).filter((c) => !covered.has(c));
   if (missing.length) problems.push(`no task covers criteri${missing.length > 1 ? 'a' : 'on'} ${missing.join(', ')}`);
+  return problems;
+}
+
+/**
+ * Tasks in different repositories that neither depend on the other run in parallel, so one
+ * can't build on what the other adds. Each such pair needs a dependency, or a reason on one of
+ * them for why they need nothing from each other.
+ */
+function unorderedAcrossRepos(tasks: PlanDraftTask[], main: string): string[] {
+  const deps = new Map(tasks.map((t) => [t.key, t.dependsOn]));
+  const reach = new Map<string, Set<string>>();
+  const upstream = (k: string): Set<string> => {
+    const known = reach.get(k);
+    if (known) return known;
+    const out = new Set<string>();
+    reach.set(k, out);
+    for (const d of deps.get(k) ?? []) {
+      if (!deps.has(d)) continue;
+      out.add(d);
+      for (const u of upstream(d)) out.add(u);
+    }
+    return out;
+  };
+  const repoOf = (t: PlanDraftTask) => t.repo ?? main;
+  const problems: string[] = [];
+  for (const [i, a] of tasks.entries()) {
+    for (const b of tasks.slice(i + 1)) {
+      if (repoOf(a) === repoOf(b) || a.independent || b.independent) continue;
+      if (upstream(a.key).has(b.key) || upstream(b.key).has(a.key)) continue;
+      problems.push(`tasks ${a.key} (${repoOf(a)}) and ${b.key} (${repoOf(b)}) are in different repositories and neither depends on the other: add the dependency, or say in "independent" why they need nothing from each other`);
+    }
+  }
   return problems;
 }
 

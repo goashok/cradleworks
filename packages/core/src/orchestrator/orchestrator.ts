@@ -250,20 +250,21 @@ export class Orchestrator {
    * Moves a task as far as it can go without a person: Build, Verify, back to Build on
    * rework, until it is ready (then the change gate), escalated, failed or merged.
    */
-  async runTask(project: Project, workItemId: string, taskId: string, onProgress: (p: Progress) => void = () => undefined): Promise<TaskOutcome> {
+  async runTask(given: Project, workItemId: string, taskId: string, onProgress: (p: Progress) => void = () => undefined): Promise<TaskOutcome> {
     for (;;) {
       const wi = await this.#mustLoad(workItemId);
       const task = findTask(wi, taskId);
+      const project = projectFor(given, task);
       const attempt = task.reworkLoops + task.gateReworks + 1;
       switch (task.state) {
         case 'queued':
         case 'rework': {
-          const outcome = await this.runBuild(project, workItemId, taskId);
+          const outcome = await this.runBuild(given, workItemId, taskId);
           onProgress({ kind: 'built', outcome, attempt });
           break;
         }
         case 'verifying': {
-          const outcome = await this.runVerify(project, workItemId, taskId);
+          const outcome = await this.runVerify(given, workItemId, taskId);
           onProgress({ kind: 'verified', outcome, attempt });
           break;
         }
@@ -300,9 +301,10 @@ export class Orchestrator {
    * back, and pushed to the same PR. Leaves the task `verifying` on success, `escalated`
    * when the agent declines to change anything, `failed` otherwise.
    */
-  async runBuild(project: Project, workItemId: string, taskId: string): Promise<BuildOutcome> {
+  async runBuild(given: Project, workItemId: string, taskId: string): Promise<BuildOutcome> {
     let wi = await this.#mustLoad(workItemId);
     const task = findTask(wi, taskId);
+    const project = projectFor(given, task);
     const rework = task.state === 'rework';
     const onBranch = rework && task.pr !== undefined;
     const runId = this.#id('run');
@@ -339,6 +341,7 @@ export class Orchestrator {
       step = 'context';
       const pack = await this.#context(project, sandbox, 'implementer', base, log);
       const contextFiles = pack.readPaths;
+      const upstream = await this.#upstream(given, project, wi, task, sandbox, log);
 
       const spec = await this.#specFor(task);
       let specWritten: { path: string; content: string } | undefined;
@@ -352,7 +355,7 @@ export class Orchestrator {
       }
 
       step = 'agent';
-      const taskText = `# ${task.title}\n\n${task.description ?? ''}`.trim() + (spec ? `\n\n## The spec this task is part of\n\n${specBody(spec)}\n\nOther tasks may cover the rest of the spec; do only this task.` : '');
+      const taskText = `# ${task.title}\n\n${task.description ?? ''}`.trim() + (upstream ? `\n\n${upstream}` : '') + (spec ? `\n\n## The spec this task is part of\n\n${specBody(spec)}\n\nOther tasks may cover the rest of the spec; do only this task.` : '');
       const humanNote = task.lastReason && task.lastReason !== task.evidence?.reason ? task.lastReason : undefined;
       const input = rework ? `${taskText}\n\n${reworkFeedback(task.evidence, humanNote, attempt, task.acceptanceTests)}` : taskText;
       const limits = { maxWallSeconds: this.#deps.buildWallSeconds ?? 1800, maxSpendUsd: project.config.budgets.perTaskUsd };
@@ -497,7 +500,7 @@ export class Orchestrator {
    * evidence, posts it on the PR, and moves the task to ready, rework or escalated.
    */
   async runVerify(
-    project: Project,
+    given: Project,
     workItemId: string,
     taskId: string,
     /** Scan the whole branch for secrets and protected paths, for commits the factory didn't build. */
@@ -506,6 +509,7 @@ export class Orchestrator {
     let wi = await this.#mustLoad(workItemId);
     const task = findTask(wi, taskId);
     if (task.state !== 'verifying') throw new Error(`task ${taskId} is ${task.state}, not verifying`);
+    const project = projectFor(given, task);
     const branch = task.branch ?? `factory/${shortId(taskId)}`;
     const base = baseFor(project, wi, task);
     const runId = this.#id('run');
@@ -594,7 +598,8 @@ export class Orchestrator {
       let agentChecks: AgentCheckResult[] = [];
       if (checksPassed) {
         step = 'review';
-        const reviewed = await this.#runReviewer(project, log, runId, profile, sandbox, base, reviewInput(task, checks, spec), { project, workItemId, taskId });
+        const upstream = await this.#upstream(given, project, wi, task, sandbox, log);
+        const reviewed = await this.#runReviewer(project, log, runId, profile, sandbox, base, reviewInput(task, checks, spec) + (upstream ? `\n\n${upstream}` : ''), { project, workItemId, taskId });
         cost += reviewed.cost;
         if (reviewed.stop) {
           const latest = await this.#mustLoad(workItemId);
@@ -633,7 +638,13 @@ export class Orchestrator {
       await log.write({ type: 'ci_checked', ...ci });
 
       const { verdict, reason } = combine(checks, ci, review, agentChecks);
-      const evidence: Evidence = { runId, sha, checks, ci, ...(review ? { review } : {}), ...(agentChecks.length ? { agentChecks } : {}), ...(factoryConfig ? { factoryConfig } : {}), verdict, reason, costUsd: cost, verifiedAt: this.#clock() };
+      // A task in another repository builds on this one: keep the change, so it can see it.
+      let change: Evidence['change'];
+      if (verdict === 'pass' && hasDependentElsewhere(wi, task)) {
+        const diff = await this.#deps.sandbox.exec(sandbox, ['git', 'diff', '--no-color', '--no-ext-diff', `origin/${base}...HEAD`]);
+        if (diff.exitCode === 0) change = diff.stdout.length > CHANGE_LIMIT ? { patch: diff.stdout.slice(0, CHANGE_LIMIT), truncated: true } : { patch: diff.stdout };
+      }
+      const evidence: Evidence = { runId, sha, checks, ci, ...(review ? { review } : {}), ...(agentChecks.length ? { agentChecks } : {}), ...(factoryConfig ? { factoryConfig } : {}), ...(change ? { change } : {}), verdict, reason, costUsd: cost, verifiedAt: this.#clock() };
       await log.write({ type: 'evidence', verdict, reason, sha });
       wi = await this.#emit(wi.id, [
         { type: 'task_evidence_recorded', at: this.#clock(), taskId, evidence },
@@ -869,7 +880,7 @@ export class Orchestrator {
       title: t.title,
       dependsOn: t.dependsOn.map((d) => ids.get(d)!),
       size: t.size,
-      description: `${t.description}\n\nCovers acceptance criteri${t.criteria.length > 1 ? 'a' : 'on'} ${t.criteria.join(', ')} of the spec.`,
+      description: `${t.description}\n\nCovers acceptance criteri${t.criteria.length > 1 ? 'a' : 'on'} ${t.criteria.join(', ')} of the spec.${t.independent ? `\n\nNeeds nothing from the tasks in other repositories: ${t.independent}` : ''}`,
       ...(t.repo && t.repo !== repos.main ? { repo: t.repo } : {}),
     }));
     await this.#emit(workItemId, [
@@ -906,9 +917,10 @@ export class Orchestrator {
    * Raises a paused task's spend cap by `extraUsd` (0 = resume under the same cap, e.g. after
    * the requester's own cap was raised). A build builds again; a verify carries on.
    */
-  async extendTaskBudget(project: Project, workItemId: string, taskId: string, input: { by: string; extraUsd: number }): Promise<number> {
+  async extendTaskBudget(given: Project, workItemId: string, taskId: string, input: { by: string; extraUsd: number }): Promise<number> {
     const wi = await this.#mustLoad(workItemId);
     const task = findTask(wi, taskId);
+    const project = projectFor(given, task);
     if (task.state !== 'budget_exceeded') throw new Error(`task ${taskId} is ${task.state}, not paused for budget`);
     if (!Number.isFinite(input.extraUsd) || input.extraUsd < 0) throw new Error('the extension must be zero or more');
     const newLimitUsd = (task.budgetUsd ?? project.config.budgets.perTaskUsd) + input.extraUsd;
@@ -1092,7 +1104,7 @@ export class Orchestrator {
   async #runOneTask(project: Project, wi: WorkItem, task: Task, onProgress: (p: WorkProgress) => void): Promise<void> {
     const target = projectFor(project, task);
     try {
-      const outcome = await this.runTask(target, wi.id, task.id, (progress) => {
+      const outcome = await this.runTask(project, wi.id, task.id, (progress) => {
         onProgress({ kind: 'task', taskId: task.id, title: task.title, progress });
         if (progress.kind === 'built' && progress.outcome.outcome === 'pr_opened' && !progress.outcome.reworked && fromTracker(wi)) {
           void this.#deps.tracker?.link(wi.source, { kind: 'pull_request', url: progress.outcome.pr.url, title: task.title }).catch(() => undefined);
@@ -1504,9 +1516,10 @@ export class Orchestrator {
   }
 
   /** A person approves a ready task at the change gate; merges when asked or when auto_merge is on. */
-  async approveTask(project: Project, workItemId: string, taskId: string, input: { by: string; reason?: string; merge?: boolean }): Promise<{ merged?: string }> {
+  async approveTask(given: Project, workItemId: string, taskId: string, input: { by: string; reason?: string; merge?: boolean }): Promise<{ merged?: string }> {
     const wi = await this.#mustLoad(workItemId);
     const task = findTask(wi, taskId);
+    const project = projectFor(given, task);
     if (task.state !== 'ready') throw new Error(`task ${taskId} is ${task.state}; only a ready task can be approved`);
     if (!task.changeApproved) {
       await this.#decideChange(wi, task, { mode: 'human', verdict: 'approved', decidedBy: input.by, reason: input.reason?.trim() || 'approved from the CLI' });
@@ -1541,9 +1554,10 @@ export class Orchestrator {
   }
 
   /** Merges an approved task's PR, refusing if its head moved since Verify passed it. */
-  async mergeTask(project: Project, workItemId: string, taskId: string): Promise<string> {
+  async mergeTask(given: Project, workItemId: string, taskId: string): Promise<string> {
     const wi = await this.#mustLoad(workItemId);
     const task = findTask(wi, taskId);
+    const project = projectFor(given, task);
     if (task.state !== 'ready' || !task.changeApproved) throw new Error(`task ${taskId} has not passed the change gate`);
     const pr = task.pr ?? fail(`task ${taskId} has no pull request`);
     const verified = task.evidence?.sha ?? fail(`task ${taskId} has no verified commit`);
@@ -1733,6 +1747,58 @@ export class Orchestrator {
       given: given.map((g) => g.given),
       opened: { root: skillsRoot, names: given.filter((g) => g.given.load === 'on-demand').map((g) => g.given.name) },
     };
+  }
+
+  /**
+   * What a task gets from the tasks it depends on in other repositories: each one's change, as
+   * Verify passed it, and that repository as it is now, both in the sandbox's reference folder
+   * (read-only to the agent). A dependency in the same repository needs none of this: the task
+   * starts from the branch it merged into. Returns the section for the agent's input, or ''.
+   */
+  async #upstream(given: Project, project: Project, wi: WorkItem, task: Task, sandbox: SandboxHandle, log: RunLog): Promise<string> {
+    const lines: string[] = [];
+    const shown: Array<{ taskId: string; repo: string; patch: boolean }> = [];
+    const cloned = new Set<string>();
+    for (const id of task.dependsOn) {
+      const dep = wi.tasks.find((t) => t.id === id);
+      const repo = dep?.repo ?? wi.projectId;
+      if (!dep || dep.state !== 'merged' || repo === project.config.project) continue;
+      const depProject = repo === given.config.project ? given : given.related?.[repo];
+      if (!depProject) {
+        await log.write({ type: 'upstream_missing', taskId: dep.id, repo });
+        continue;
+      }
+      const where = `${sandbox.contextSandboxPath}/${UPSTREAM_DIR}`;
+      if (!cloned.has(repo)) {
+        try {
+          await this.#deps.sourceControl.clone(depProject.repo, join(sandbox.contextPath, UPSTREAM_DIR, 'repos', repo), { ref: baseFor(depProject, wi, dep), depth: 1 });
+        } catch (error) {
+          // The work goes on without it; the log says what was missing.
+          await log.write({ type: 'upstream_missing', taskId: dep.id, repo, error: error instanceof Error ? error.message : String(error) });
+          continue;
+        }
+        cloned.add(repo);
+      }
+      const change = dep.evidence?.change;
+      let changeAt = '';
+      if (change) {
+        const file = `${shortId(dep.id)}.patch`;
+        mkdirSync(join(sandbox.contextPath, UPSTREAM_DIR, 'changes'), { recursive: true });
+        writeFileSync(join(sandbox.contextPath, UPSTREAM_DIR, 'changes', file), change.patch);
+        changeAt = `its change is in \`${where}/changes/${file}\`${change.truncated ? ' (cut short: read the files themselves for the rest)' : ''}; `;
+      }
+      lines.push(`- **${dep.title}**, merged in \`${repo}\`: ${changeAt}\`${repo}\` as it is now, with the change, is in \`${where}/repos/${repo}\`.`);
+      shown.push({ taskId: dep.id, repo, patch: Boolean(change) });
+    }
+    if (!lines.length) return '';
+    await log.write({ type: 'upstream_given', tasks: shown });
+    return [
+      '## Work in other repositories this task builds on',
+      '',
+      'This task depends on these tasks, already merged in other repositories. Read them before you start, and match what they actually added: names, paths, fields, shapes. They are there to read; change only this repository.',
+      '',
+      ...lines,
+    ].join('\n');
   }
 
   async #runAgent(
@@ -1949,6 +2015,22 @@ function fromTracker(wi: WorkItem): boolean {
   return !wi.source.id.startsWith('submitted:');
 }
 
+/** Where, in the reference folder, a task finds the work it builds on in other repositories. */
+const UPSTREAM_DIR = 'upstream';
+
+/** Characters of a change kept for the tasks in other repositories that build on it. */
+const CHANGE_LIMIT = 100_000;
+
+/** Whether a task in another repository depends on this one. */
+function hasDependentElsewhere(wi: WorkItem, task: Task): boolean {
+  const repo = (t: Task) => t.repo ?? wi.projectId;
+  return wi.tasks.some((t) => t.dependsOn.includes(task.id) && repo(t) !== repo(task));
+}
+
+/**
+ * The project a task changes. `project` is the work item's own (the usual case), or already
+ * the task's: either way the answer is the task's.
+ */
 function projectFor(project: Project, task: Task): Project {
   if (!task.repo || task.repo === project.config.project) return project;
   return project.related?.[task.repo] ?? fail(`task ${task.id} is for ${task.repo}, which is not a related repo of ${project.config.project}`);
