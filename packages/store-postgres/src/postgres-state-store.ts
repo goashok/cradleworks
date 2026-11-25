@@ -25,6 +25,8 @@ const SCHEMA_VERSION = 1;
 /** Key for the advisory lock that orders appends (and serialises migrations). */
 const APPEND_LOCK = 0x63770001;
 const MIGRATE_LOCK = 0x63770002;
+/** Tries for a transaction the server aborted for a deadlock or serialisation failure. */
+const RETRIES = 4;
 const NAME = /^[a-z_][a-z0-9_]{0,62}$/;
 
 const schemaSql = (s: string) => `
@@ -212,6 +214,16 @@ export class PostgresStateStore implements StateStore {
       await c.query('BEGIN');
       // Two services starting at once would race on CREATE ... IF NOT EXISTS; take turns.
       await c.query('SELECT pg_advisory_xact_lock($1)', [MIGRATE_LOCK]);
+      // A schema already at this version is left alone: recreating its triggers takes the
+      // strongest lock on the events table, and with other processes appending that deadlocks.
+      const ready = (await c.query<{ meta: string | null }>(`SELECT to_regclass('${this.#s}.meta') AS meta`)).rows[0]?.meta;
+      if (ready) {
+        const current = (await c.query<{ value: string }>(`SELECT value FROM ${this.#s}.meta WHERE key = 'schema_version'`)).rows[0];
+        if (current && Number(current.value) === SCHEMA_VERSION) {
+          await c.query('COMMIT');
+          return;
+        }
+      }
       await c.query(`CREATE SCHEMA IF NOT EXISTS ${this.#s}`);
       await c.query(schemaSql(this.#s));
       const row = (await c.query<{ value: string }>(`SELECT value FROM ${this.#s}.meta WHERE key = 'schema_version'`)).rows[0];
@@ -242,23 +254,34 @@ export class PostgresStateStore implements StateStore {
     }
   }
 
+  /**
+   * Runs `fn` in a transaction. One the server aborts for a deadlock or a serialisation failure
+   * rolled back entirely, so it runs again, a few times, as Postgres advises.
+   */
   async #transaction<T>(operation: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
-    let c: pg.PoolClient;
-    try {
-      c = await this.#pool.connect();
-    } catch (error) {
-      throw translate(error, operation);
-    }
-    try {
-      await c.query('BEGIN');
-      const result = await fn(c);
-      await c.query('COMMIT');
-      return result;
-    } catch (error) {
-      await c.query('ROLLBACK').catch(() => undefined);
-      throw translate(error, operation);
-    } finally {
-      c.release();
+    for (let attempt = 1; ; attempt++) {
+      let c: pg.PoolClient;
+      try {
+        c = await this.#pool.connect();
+      } catch (error) {
+        throw translate(error, operation);
+      }
+      try {
+        await c.query('BEGIN');
+        const result = await fn(c);
+        await c.query('COMMIT');
+        return result;
+      } catch (error) {
+        await c.query('ROLLBACK').catch(() => undefined);
+        const code = (error as { code?: string }).code;
+        if ((code === '40P01' || code === '40001') && attempt < RETRIES) {
+          await new Promise((r) => setTimeout(r, 20 * attempt + Math.random() * 30));
+          continue;
+        }
+        throw translate(error, operation);
+      } finally {
+        c.release();
+      }
     }
   }
 

@@ -95,6 +95,39 @@ describe.skipIf(!pgServer)('PostgresStateStore', () => {
       }
     }));
 
+  it('lets stores open while others append and save snapshots, as many factory processes on one database do', () =>
+    withSchema(async (schema) => {
+      const open = (tenant: string) => PostgresStateStore.open({ connectionString: pgServer!.url, schema, tenant });
+      const first = await open('t0');
+      const errors: unknown[] = [];
+      // Writers keep appending and saving snapshots, each in its own tenant, while new stores open.
+      const writers = [1, 2, 3].map(async (w) => {
+        const store = await open(`t${w}`);
+        try {
+          for (let n = 0; n < 40; n++) {
+            const [last] = (await store.append(`s${n}`, [e('a'), e('b')], 0)).slice(-1);
+            await store.saveSnapshot({ streamId: `s${n}`, seq: last!.seq, state: { n } });
+          }
+        } catch (error) {
+          errors.push(error);
+        } finally {
+          await store.close();
+        }
+      });
+      const openers = Array.from({ length: 30 }, async (_, i) => {
+        try {
+          const s = await open(`o${i}`);
+          await s.readStream('x');
+          await s.close();
+        } catch (error) {
+          errors.push(error);
+        }
+      });
+      await Promise.all([...writers, ...openers]);
+      await first.close();
+      expect(errors.map((x) => (x as Error).message)).toEqual([]);
+    }), 60_000);
+
   it('creates its schema once when several start together, and refuses a newer schema version', () =>
     withSchema(async (schema) => {
       const stores = await Promise.all([0, 1, 2].map(() => PostgresStateStore.open({ connectionString: pgServer!.url, schema })));
