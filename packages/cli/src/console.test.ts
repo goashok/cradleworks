@@ -75,7 +75,8 @@ describe('factory console', () => {
     expect(await (await fetch(`${url}runs`)).text()).toContain(`/run/${runId}`);
 
     const detail = await (await fetch(`${url}wi/${wiId}`)).text();
-    expect(detail).toContain('Approve change');
+    expect(detail).toContain('<button class="primary">Approve and merge</button>');
+    expect(detail).toContain('Approve only');
     expect(detail).toContain(`described ${wiId}`);
     expect(await (await fetch(`${url}run/${runId}`)).text()).toContain('Adding a changelog.');
     expect((await fetch(`${url}wi/wi_nope`)).status).toBe(404);
@@ -102,6 +103,16 @@ describe('factory console', () => {
     const after = (await factory(['status', wiId])).output;
     expect(after).not.toContain(`factory approve ${taskId} [--merge]`);
     expect(after).toContain('merge on the pull request');
+
+    // Approved and not merged: it still waits on a person, now with a Merge button.
+    const approved = await (await fetch(`${url}wi/${wiId}`)).text();
+    expect(approved).toContain('Approved, waiting to be merged');
+    expect(approved).toContain('<button class="primary">Merge</button>');
+    expect(await (await fetch(`${url}waiting`)).text()).toContain('Change to merge');
+    const merged = await post({ action: 'merge', id: taskId, token });
+    expect(decodeURIComponent(merged.headers.get('location')!)).toContain(`Done: factory approve ${taskId} --merge`);
+    expect((await factory(['status', wiId])).output).toMatch(new RegExp(`${wiId}\\s+merged`));
+    expect(await (await fetch(`${url}wi/${wiId}`)).text()).not.toContain('<form');
   });
 });
 
@@ -126,6 +137,10 @@ describe('console helpers', () => {
     expect(commandFor({ action: 'extend', id: 'task_1', usd: '2.5' })).toEqual(['budget', 'extend', 'task_1', '--usd', '2.5', '--no-run']);
     expect(commandFor({ action: 'cancel', id: 'wi_1' })).toBeUndefined();
     expect(commandFor({ action: 'approve', id: '--merge' })).toBeUndefined();
+    expect(commandFor({ action: 'approve_merge', id: 'task_1', reason: 'ok' })).toEqual(['approve', 'task_1', '--merge', '--reason', 'ok']);
+    expect(commandFor({ action: 'merge', id: 'task_1' })).toEqual(['approve', 'task_1', '--merge']);
+    expect(commandFor({ action: 'merge', id: 'wi_1' })).toBeUndefined();
+    expect(commandFor({ action: 'approve_merge', id: 'wi_1' })).toBeUndefined();
     expect(commandFor({ action: 'delete', id: 'wi_1' })).toBeUndefined();
   });
 

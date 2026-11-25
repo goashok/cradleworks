@@ -351,8 +351,11 @@ A local web page over the factory's state, at `http://127.0.0.1:4747/` by defaul
   it ran (sandbox, network, rules, limits) and the text of `factory log --full` are folded below.
 
 The buttons are the CLI's own commands, run in the directory the console started in: approve, send
-back (`reject --no-run`), retry (`--no-run`), extend a budget (`--no-run`) and cancel. A running
-`factory watch` carries the work on. They keep every rule the CLI has; for example, a change to
+back (`reject --no-run`), retry (`--no-run`), extend a budget (`--no-run`) and cancel. A change
+waiting at the gate has **Approve and merge** (`approve --merge`), **Approve only** (`approve`,
+leaving the merge to you or the pull request) and **Send back**. A change that's approved but not
+merged waits on you too, with a **Merge** button (`approve --merge`). A running `factory watch`
+carries the work on. They keep every rule the CLI has; for example, a change to
 protected files still can't be approved by an AI gate.
 
 The console listens on this machine only. Each button press carries a random token that only the

@@ -97,7 +97,10 @@ const REASON = '<input type="text" name="reason" placeholder="Reason" required>'
 /** The decisions one task waits on, as buttons; `named` puts the task's title on them. */
 function taskActions(t: WorkItem['tasks'][number], token: string, named: boolean): string[] {
   const of = named ? ` “${t.title}”` : '';
-  if (t.state === 'ready' && !t.changeApproved) return [form(token, 'approve', t.id, `Approve change${of}`, '', 'primary'), form(token, 'reject', t.id, 'Send back', REASON)];
+  if (t.state === 'ready' && !t.changeApproved) {
+    return [form(token, 'approve_merge', t.id, `Approve and merge${of}`, '', 'primary'), form(token, 'approve', t.id, `Approve only${of}`), form(token, 'reject', t.id, 'Send back', REASON)];
+  }
+  if (t.state === 'ready') return [form(token, 'merge', t.id, `Merge${of}`, '', 'primary')];
   if (t.state === 'escalated' || t.state === 'failed') return [form(token, 'retry', t.id, `Retry${of}`, '', 'primary')];
   if (t.state === 'budget_exceeded') return [form(token, 'extend', t.id, `Extend budget${of}`, '<input type="number" name="usd" min="0.5" step="0.5" value="5" style="width:80px" aria-label="Extra US dollars">', 'primary')];
   return [];
@@ -155,6 +158,11 @@ export function commandFor(form: Record<string, string>): string[] | undefined {
   switch (form.action) {
     case 'approve':
       return ['approve', id, ...(reason ? ['--reason', reason] : [])];
+    // Merging is for tasks only: `approve <wi> --merge` would mean nothing at the spec gate.
+    case 'approve_merge':
+      return id.startsWith('task_') ? ['approve', id, '--merge', ...(reason ? ['--reason', reason] : [])] : undefined;
+    case 'merge':
+      return id.startsWith('task_') ? ['approve', id, '--merge'] : undefined;
     case 'reject':
       return reason ? ['reject', id, '--reason', reason, '--no-run'] : undefined;
     case 'retry':

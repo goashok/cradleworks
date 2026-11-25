@@ -5,25 +5,25 @@
 // Pure: no I/O. Everything from the store is escaped.
 
 import type { Run, WorkItem } from '@cradleworks/core';
-import { chip, esc, headline, money, outcomeChip, runName, when } from './console-view.ts';
+import { chip, esc, headline, money, outcomeChip, runName, waitsForPerson, when } from './console-view.ts';
 
 const WAITING = new Set(['awaiting_spec_approval', 'awaiting_change_approval', 'blocked']);
-const TASK_WAITING = new Set(['escalated', 'budget_exceeded', 'failed']);
 export const FINISHED = new Set(['merged', 'failed', 'cancelled']);
 const DAY = 86_400_000;
 
 export function needsPerson(wi: WorkItem): boolean {
   if (FINISHED.has(wi.state)) return false;
-  return WAITING.has(wi.state) || wi.tasks.some((t) => TASK_WAITING.has(t.state) || (t.state === 'ready' && !t.changeApproved));
+  return WAITING.has(wi.state) || wi.tasks.some(waitsForPerson);
 }
 
 /** What a waiting work item waits on, in a few words: the group it is counted in on the dashboard. */
 export function waitKind(wi: WorkItem): string {
   if (wi.state === 'awaiting_spec_approval') return 'Spec to approve';
   if (wi.state === 'blocked') return 'Blocked';
-  const t = wi.tasks.find((x) => TASK_WAITING.has(x.state) || (x.state === 'ready' && !x.changeApproved));
+  const t = wi.tasks.find(waitsForPerson);
   if (!t) return 'Change to approve';
-  return t.state === 'ready' ? 'Change to approve' : t.state === 'escalated' ? 'Escalated to you' : t.state === 'budget_exceeded' ? 'Over budget' : 'Failed, retry or cancel';
+  if (t.state === 'ready') return t.changeApproved ? 'Change to merge' : 'Change to approve';
+  return t.state === 'escalated' ? 'Escalated to you' : t.state === 'budget_exceeded' ? 'Over budget' : 'Failed, retry or cancel';
 }
 
 export type WorkFilter = 'all' | 'waiting' | 'active' | 'finished';

@@ -54,13 +54,21 @@ const TASK_WORDS: Record<string, [string, Tone]> = {
 };
 
 export function taskState(t: Task): [string, Tone] {
-  if (t.state === 'ready') return t.changeApproved ? ['Approved, merging', 'busy'] : ['Waiting for approval', 'wait'];
+  if (t.state === 'ready') return t.changeApproved ? ['Approved, waiting to be merged', 'wait'] : ['Waiting for approval', 'wait'];
   return TASK_WORDS[t.state] ?? [t.state.replace(/_/g, ' '), 'idle'];
+}
+
+/**
+ * A task waits on a person: escalated, failed or over budget, or ready, whether still to
+ * approve or approved and not merged (a merge left to a person, or one that was refused).
+ */
+export function waitsForPerson(t: Task): boolean {
+  return ['escalated', 'budget_exceeded', 'failed', 'ready'].includes(t.state);
 }
 
 /** One sentence on where the work stands, and whether a person is needed. */
 export function headline(wi: WorkItem): { text: string; tone: Tone; needsYou: boolean } {
-  const waitingTask = ['merged', 'failed', 'cancelled'].includes(wi.state) ? undefined : wi.tasks.find((t) => ['escalated', 'budget_exceeded', 'failed'].includes(t.state) || (t.state === 'ready' && !t.changeApproved));
+  const waitingTask = ['merged', 'failed', 'cancelled'].includes(wi.state) ? undefined : wi.tasks.find(waitsForPerson);
   switch (wi.state) {
     case 'received':
       return { text: 'Received. The factory starts on it at its next pass.', tone: 'idle', needsYou: false };
@@ -307,7 +315,7 @@ export function taskCard(t: Task, wi: WorkItem, actions: string): string {
     t.reworkLoops ? `${t.reworkLoops} rework round${t.reworkLoops > 1 ? 's' : ''}` : '',
   ].filter(Boolean);
   const finished = ['merged', 'failed', 'cancelled'].includes(wi.state);
-  const needs = !finished && (['escalated', 'budget_exceeded', 'failed'].includes(t.state) || (t.state === 'ready' && !t.changeApproved));
+  const needs = !finished && waitsForPerson(t);
   return `<section class="card${needs ? ' attention' : ''}"><div class="row"><h3>${esc(t.title)}</h3>${chip(label, tone)}</div>
 <p class="muted small">${facts.join(' · ')}</p>
 ${deps.length && t.state === 'queued' ? `<p class="muted small">Starts after: ${deps.map((d) => `“${esc(d)}”`).join(', ')}</p>` : ''}
