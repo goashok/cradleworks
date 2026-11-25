@@ -24,6 +24,7 @@ factory stats [--days <n>] [--project <name>] [--json]
 factory validate [<dir>] [--json]
 factory docs [<topic> [<section>]] [--sections] [--search <words>]
 factory config explain [<key>...]
+factory config get <key>
 factory skills list | add <git-url|folder> [--path <dir>] [--ref <ref>] [--name <name>] | update <name> [--ref <ref>] | lock <name>
 factory log <run-id|work-item-id> [--full] [--json]
 factory help
@@ -312,6 +313,12 @@ Write keys with dots: `gates.change_approval`, `verify.agent_checks.security.blo
 chose works where the reference says `<name>`). A mapping such as `gates` lists the keys under
 it. A key that doesn't exist exits 2 and suggests the one you probably meant. With no key, it
 lists every key.
+
+## `factory config get <key>`
+
+Prints one key's value and nothing else: this repository's, or the default when the repository
+doesn't set it. For scripts, for example `docker build -t "$(factory config get stack.image)"
+.factory/image`. A key that doesn't exist exits 2; a key with no value and no default exits 1.
 
 ## `factory log <id>`
 

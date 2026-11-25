@@ -378,9 +378,29 @@ function docs(args: string[], io: CliEnv): number {
   return 0;
 }
 
+/** Prints one key's value, the project's or the default, with nothing around it: for scripts. */
+function configGet(args: string[], io: CliEnv): number {
+  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  if (positionals.length !== 1) throw new UsageError('factory config get <key>');
+  const key = positionals[0]!;
+  const e = explain(key, findProjectRoot(io.cwd));
+  if ('unknown' in e) {
+    io.stderr(`factory: ${key} is not a factory.yaml key${e.suggestions.length ? `; did you mean ${e.suggestions.join(', ')}?` : ''}\n`);
+    return 2;
+  }
+  const value = e.current ?? e.default;
+  if (value === undefined) {
+    io.stderr(`factory: ${key} has no value here and no default\n`);
+    return 1;
+  }
+  io.stdout(`${value}\n`);
+  return 0;
+}
+
 function configCommand(args: string[], io: CliEnv): number {
   const [sub, ...rest] = args;
-  if (sub !== 'explain') throw new UsageError('factory config explain [<key>]');
+  if (sub === 'get') return configGet(rest, io);
+  if (sub !== 'explain') throw new UsageError('factory config explain [<key>] | factory config get <key>');
   const { positionals } = parseArgs({ args: rest, allowPositionals: true, options: {} });
   if (!positionals.length) {
     io.stdout(formatKeyList());

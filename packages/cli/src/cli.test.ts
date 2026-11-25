@@ -281,6 +281,14 @@ describe('parseTaskFile', () => {
   });
 });
 
+describe('factory config get', () => {
+  it("prints the project's value, or the default, and nothing else", async () => {
+    expect(await factory(['config', 'get', 'adapters.scm'])).toMatchObject({ code: 0, stdout: 'local-git\n' });
+    expect(await factory(['config', 'get', 'gates.change_approval'])).toMatchObject({ code: 0, stdout: 'human\n' });
+    expect(await factory(['config', 'get', 'gates.nope'])).toMatchObject({ code: 2, stderr: expect.stringMatching(/not a factory.yaml key/) });
+  });
+});
+
 describe('factory watch', () => {
   const WATCH_YAML = FACTORY_YAML.replace('tracker: none', 'tracker: fake') + 'gates: { spec_approval: human, plan_check: ai, change_approval: ai, auto_merge: true }\n';
   const json = (v: unknown): ScriptStep => ({ kind: 'message', text: `\`\`\`json\n${JSON.stringify(v)}\n\`\`\`` });
