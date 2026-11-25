@@ -107,11 +107,12 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 - [Get help as you go](docs/guides/getting-help.md): `factory docs`, `factory config explain`, and a skill for your coding assistant
 
 **Guides**
-- [Add your own project](docs/guides/add-a-project.md): write a `.factory/` folder and switch to GitHub
+- [Add your own project](docs/guides/add-a-project.md): write a `.factory/` folder (rules, prompt additions, skills) and switch to GitHub
+- [Make it your team's](docs/guides/customizing.md): which of rules, prompt additions, skills, agent checks and drill cases to use for what
 - [Write good tasks](docs/guides/writing-tasks.md): what to put in a task file, and what the agent sees
 - [From an issue to merged PRs](docs/guides/issues.md): `factory watch`, the spec and plan gates, parallel tasks, the tester
 - [Verify, rework and approve](docs/guides/verify-and-approve.md): what's checked, the evidence,
-  the change gate, and what to do when a task escalates
+  the change gate, agent checks and drilling them, and what to do when a task escalates
 - [Follow and replay runs](docs/guides/runs-and-logs.md): `status`, `log`, and where state lives
 - [Sandbox and credentials](docs/guides/security.md): what the agent can and cannot reach
 - [GitHub App tokens](docs/guides/github-app.md): short-lived, repo-scoped tokens instead of yours

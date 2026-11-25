@@ -299,6 +299,7 @@ to keep experiments separate.
 
 - [How it works](how-it-works.md): what happened in those twenty seconds, and why it's built this way
 - [Add your own project](guides/add-a-project.md): your repo, your image, your rules, real GitHub PRs
+- [Make it your team's](guides/customizing.md): rules, prompt additions, skills, agent checks and drill cases, and when to use each
 - [Write good tasks](guides/writing-tasks.md): get better results from the agent
 - [From an issue to merged PRs](guides/issues.md): let `factory watch` take GitHub issues from spec to merge
 - [Get help as you go](guides/getting-help.md): `factory docs`, `factory config explain`, and a skill so your coding assistant can answer questions and walk you through setup

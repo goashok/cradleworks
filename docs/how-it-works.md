@@ -129,8 +129,16 @@ suite passes against the real service. See [Write an adapter](guides/writing-an-
 Everything specific to a project lives in that project's repo, in `.factory/`, and is reviewed
 like code:
 
-- `factory.yaml`: the image, commands, rules to load, limits and adapters
+- `factory.yaml`: the image, commands, rules to load, gates, limits, adapters, and which skills
+  and agent checks each role gets
 - `rules/*.md`: conventions, constraints and "never do X" notes, loaded into every run
+- `prompts/<role>.md`: how one role (say, the reviewer) should work differently on this codebase
+- `skills/<name>/` and `skills.lock`: instructions for one kind of work, vendored and pinned
+- `drill/`: changes with a known verdict, which show that a check still catches what it should
+- `specs/`: the approved specs, committed with the work they asked for
 - `image/Dockerfile` (by convention): the sandbox image
 
-Onboarding a new stack means writing this folder. It never means changing the factory.
+Agents read all of it from the base branch, so a change takes effect once it's merged, and a
+person must approve any change to it. Onboarding a new stack, or teaching the factory how your
+team works, means writing this folder. It never means changing the factory. See
+[Make it your team's](guides/customizing.md).
