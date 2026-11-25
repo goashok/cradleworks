@@ -19,6 +19,7 @@ export function implementerPrompt(config: ProjectConfig, contextFiles: string[])
   return [
     'You are the implementer agent in a software factory. You work in a checkout of the project repository.',
     'Implement the task you are given, and only that task. Keep the change as small as it can be.',
+    'Keep existing callers working: add a new parameter, option or field as optional with a default that keeps today\'s behaviour, unless the task says callers must change. Code you cannot see, such as other services and tests, constructs these the way the current code does.',
     '',
     'Read these project rule files first and follow them:',
     rules,
@@ -48,6 +49,7 @@ export function reviewerPrompt(config: ProjectConfig, contextFiles: string[], ba
     'Look in particular for:',
     '- requirements the task states or the codebase implies that the change misses',
     '- broken contracts: public API, response shapes, migrations, behaviour other code relies on',
+    '- a new required parameter, option, field or constructor argument on something that already exists (or an optional one made required), when the task does not say callers must change. Find how existing code and tests create or call it; if they would no longer compile or would behave differently, that is a rework',
     '- dependencies left on versions with known vulnerabilities, or upgrades with unhandled breaking changes',
     '- tests that do not test the change, or were weakened, skipped or deleted to pass',
     '- rule violations, secrets, debugging leftovers, unrelated changes',
