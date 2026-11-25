@@ -43,4 +43,23 @@ describe('GitHub App tokens', () => {
     expect(() => tokenProviderFromEnv({ CRADLEWORKS_GITHUB_APP_ID: '1' })).toThrow(/both CRADLEWORKS_GITHUB_APP_ID and CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE/);
     expect(tokenProviderFromEnv({ CRADLEWORKS_GITHUB_APP_ID: '1', CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE: '/nonexistent' })).not.toBe(personalTokenProvider);
   });
+
+  it('takes the key itself from CRADLEWORKS_GITHUB_APP_PRIVATE_KEY, newlines written as \\n too', async () => {
+    const seen: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      seen.push(`${init.method} ${String(url).replace('https://api.github.com', '')}`);
+      const [h, p, s] = String((init.headers as Record<string, string>).authorization).slice('Bearer '.length).split('.');
+      expect(createVerify('RSA-SHA256').update(`${h}.${p}`).verify(publicKey, Buffer.from(s!, 'base64url'))).toBe(true);
+      return new Response(JSON.stringify({ token: 'ghs_app', expires_at: '2099-01-01T00:00:00Z' }), { status: 201 });
+    }) as typeof fetch;
+    try {
+      const provider = tokenProviderFromEnv({ CRADLEWORKS_GITHUB_APP_ID: '7', CRADLEWORKS_GITHUB_APP_PRIVATE_KEY: privateKey.replace(/\n/g, '\\n'), CRADLEWORKS_GITHUB_APP_INSTALLATION_ID: '42' });
+      expect(await provider()).toBe('ghs_app');
+      expect(seen).toEqual(['POST /app/installations/42/access_tokens']);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(() => tokenProviderFromEnv({ CRADLEWORKS_GITHUB_APP_ID: '7', CRADLEWORKS_GITHUB_APP_PRIVATE_KEY: 'k', CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE: '/f' })).toThrow(/not both/);
+  });
 });

@@ -44,6 +44,9 @@ It's off unless you configure it.
 5. **Check it:** `factory validate` works as before. The next pull request the factory opens is
    authored by `yourname-factory[bot]`.
 
+Where secrets live in environment variables rather than files, as on most hosting services, set
+`CRADLEWORKS_GITHUB_APP_PRIVATE_KEY` to the key itself instead of the file's path.
+
 To switch back, unset `CRADLEWORKS_GITHUB_APP_ID` and `CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE`.
 
 ## What this does and doesn't change

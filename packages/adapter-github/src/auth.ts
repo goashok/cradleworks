@@ -122,22 +122,26 @@ export function appJwt(appId: string, privateKey: string, nowSeconds: number): s
 }
 
 /**
- * The provider the adapters use: a GitHub App when `CRADLEWORKS_GITHUB_APP_ID` and
- * `CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE` are set (optionally
+ * The provider the adapters use: a GitHub App when `CRADLEWORKS_GITHUB_APP_ID` and the key are
+ * set, the key as `CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE` or, where secrets are environment
+ * variables, `CRADLEWORKS_GITHUB_APP_PRIVATE_KEY` (the PEM itself) (optionally
  * `CRADLEWORKS_GITHUB_APP_INSTALLATION_ID` and `CRADLEWORKS_GITHUB_APP_REPOSITORIES`,
  * comma-separated), else the personal token. Off unless configured.
  */
 export function tokenProviderFromEnv(env: NodeJS.ProcessEnv = process.env): TokenProvider {
   const appId = env.CRADLEWORKS_GITHUB_APP_ID?.trim();
   const keyFile = env.CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE?.trim();
-  if (!appId && !keyFile) return personalTokenProvider;
-  if (!appId || !keyFile) throw new Error('set both CRADLEWORKS_GITHUB_APP_ID and CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE to use a GitHub App');
+  // Some hosts store a multi-line value with its newlines written as \n.
+  const keyValue = env.CRADLEWORKS_GITHUB_APP_PRIVATE_KEY?.trim().replace(/\\n/g, '\n');
+  if (!appId && !keyFile && !keyValue) return personalTokenProvider;
+  if (keyFile && keyValue) throw new Error('set CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE or CRADLEWORKS_GITHUB_APP_PRIVATE_KEY, not both');
+  if (!appId || !(keyFile || keyValue)) throw new Error('set both CRADLEWORKS_GITHUB_APP_ID and CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE (or CRADLEWORKS_GITHUB_APP_PRIVATE_KEY) to use a GitHub App');
   const installationId = env.CRADLEWORKS_GITHUB_APP_INSTALLATION_ID?.trim();
   const repositories = env.CRADLEWORKS_GITHUB_APP_REPOSITORIES?.split(',').map((r) => r.trim()).filter(Boolean);
   let provider: TokenProvider | undefined;
   return () => {
     // The key is read on first use, so a missing file is reported where a token is needed.
-    provider ??= githubAppTokenProvider({ appId, privateKey: readFileSync(keyFile, 'utf8'), ...(installationId ? { installationId } : {}), ...(repositories?.length ? { repositories } : {}) });
+    provider ??= githubAppTokenProvider({ appId, privateKey: keyValue || readFileSync(keyFile!, 'utf8'), ...(installationId ? { installationId } : {}), ...(repositories?.length ? { repositories } : {}) });
     return provider();
   };
 }

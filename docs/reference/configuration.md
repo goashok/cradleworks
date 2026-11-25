@@ -139,6 +139,7 @@ Don't list them yourself.
 | `CLAUDE_CODE_OAUTH_TOKEN` | The subscription token from `claude setup-token`. Keychain fallback: service `cradleworks-claude-oauth-token`. |
 | `CRADLEWORKS_CLAUDE_AUTH` | Set to `subscription` to prefer the subscription token when both are present. |
 | `CRADLEWORKS_GITHUB_APP_ID`, `CRADLEWORKS_GITHUB_APP_PRIVATE_KEY_FILE` | Use a GitHub App's short-lived tokens instead of `GITHUB_TOKEN`. See [GitHub App tokens](../guides/github-app.md). |
+| `CRADLEWORKS_GITHUB_APP_PRIVATE_KEY` | The app's key itself instead of a file, for hosts that keep secrets in environment variables. Newlines may be written as `\n`. Set this or the file, not both. |
 | `CRADLEWORKS_GITHUB_APP_INSTALLATION_ID`, `CRADLEWORKS_GITHUB_APP_REPOSITORIES` | Optional, with the app: which installation, and which repositories (comma-separated names) tokens may see. |
 
 ## A complete example
