@@ -149,6 +149,44 @@ describe('issue flow', () => {
     expect(await file(bare, 'main', '.factory/specs/issue-1-export-orders.md')).toContain('Approved by sam');
   });
 
+  it('builds a task again on the current base when its change conflicts with one merged before it', async () => {
+    const both = { tasks: [
+      { key: 't1', title: 'Write export', description: 'Put the export in shared.txt.', size: 'small', depends_on: [], criteria: [1, 3] },
+      { key: 't2', title: 'Write summary', description: 'Put the summary in shared.txt.', size: 'small', depends_on: [], criteria: [2] },
+    ] };
+    const REBUILD = '## Build it again on the current base';
+    const o = orchestrator({
+      planner: () => [json(both)],
+      tester: (req) => {
+        const key = req.input.includes('# Task: Write export') ? 'export' : 'summary';
+        return [{ kind: 'message', text: 'Tests written.' }, write(`${key}.acceptance.sh`, 'test -f shared.txt\n')];
+      },
+      implementer: (req) => {
+        const title = /^# (.*)$/m.exec(req.input)?.[1] ?? '';
+        // Both tasks write the same file differently, so whichever merges second conflicts.
+        return [{ kind: 'message', text: `Did ${title}.` }, write('shared.txt', req.input.includes(REBUILD) ? 'export\nsummary\n' : `${title}\n`)];
+      },
+    });
+    const ref = issue();
+    const { workItemId } = await o.receiveItem(project, ref);
+    await o.runWorkItem(project, workItemId);
+    tracker.addComment(ref, 'sam', '/approve');
+    const progress: WorkProgress[] = [];
+    expect((await o.runWorkItem(project, workItemId, (p) => progress.push(p))).state).toBe('merged');
+
+    const wi = (await o.getWorkItem(workItemId))!;
+    expect(wi.tasks.map((t) => t.state)).toEqual(['merged', 'merged']);
+    const rebuilt = wi.tasks.find((t) => t.reworkLoops === 1)!;
+    expect(rebuilt).toBeDefined();
+    expect(rebuilt.rebuildOnBase).toBeUndefined();
+    expect(progress.some((p) => p.kind === 'task' && p.progress.kind === 'merge_conflict')).toBe(true);
+    // The rebuild started from main as it now is, and was told where its earlier change is.
+    const input = requests.filter((r) => r.profile.role === 'implementer').map((r) => r.input).find((i) => i.includes(REBUILD))!;
+    expect(input).toContain(`git diff origin/main...origin/${rebuilt.branch}`);
+    expect(await file(bare, 'main', 'shared.txt')).toBe('export\nsummary\n');
+    expect(await file(bare, 'main', '.factory/specs/issue-1-export-orders.md')).toContain('Approved by sam');
+  });
+
   it('goes from an issue to merged pull requests, waiting for the spec approval', async () => {
     const o = orchestrator();
     const ref = issue();

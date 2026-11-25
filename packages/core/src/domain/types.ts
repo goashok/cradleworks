@@ -79,6 +79,8 @@ export interface Task {
   changeApproved: boolean;
   /** State to return to when an exceeded budget is extended. */
   resumeState?: 'building' | 'verifying';
+  /** Set when the change conflicted with its base: the next build starts from the current base, not the old branch. */
+  rebuildOnBase?: boolean;
   /** Protected files the change touches: the change gate waits for a person and nothing merges it automatically. */
   protectedPaths?: string[];
   /** Model spend on this task so far, every attempt and agent together. */

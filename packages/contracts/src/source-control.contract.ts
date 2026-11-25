@@ -139,6 +139,17 @@ export function describeSourceControlContract(
       expect(readFileSync(join(fresh.path, file), 'utf8')).toBe('hello\n');
     });
 
+    it('refuses with merge_conflict a change that conflicts with what merged into the base', async () => {
+      const file = `${unique('both')}.txt`;
+      const first = await pushedBranch(file, 'first\n');
+      const second = await pushedBranch(file, 'second\n');
+      const pr1 = await f.adapter.openPR({ repo: f.repo, head: first.branch, base: 'main', title: `Test ${first.branch}`, body: 'Contract test' });
+      const pr2 = await f.adapter.openPR({ repo: f.repo, head: second.branch, base: 'main', title: `Test ${second.branch}`, body: 'Contract test' });
+      await f.adapter.merge(pr1, { method: 'squash', expectedHeadSha: first.commit.sha });
+      await expectAdapterError(f.adapter.merge(pr2, { method: 'squash', expectedHeadSha: second.commit.sha }), 'merge_conflict');
+      expect((await f.adapter.getPRStatus(pr2)).state).toBe('open');
+    });
+
     it('reports an unknown pull request as not found', async () => {
       await expectAdapterError(f.adapter.getPRStatus(f.missingPR), 'not_found');
     });

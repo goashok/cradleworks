@@ -61,6 +61,12 @@ export type WorkItemEvent =
   | (Base & { type: 'task_reverify_requested'; taskId: string; requestedBy: string; reason: string })
   /** The implementer finished without changing anything and said why; a human decides. */
   | (Base & { type: 'task_declined'; taskId: string; reason: string })
+  /**
+   * An approved task could not merge because its change conflicts with what has landed on the
+   * base branch since it was built. It goes back to be built again on the current base, which
+   * counts as a rework loop.
+   */
+  | (Base & { type: 'task_merge_conflicted'; taskId: string; base: string; reason: string })
   | (Base & { type: 'task_rework_started'; taskId: string })
   /** The tester agent wrote acceptance tests from the spec, once per task, before seeing the diff. */
   | (Base & { type: 'task_acceptance_tests_written'; taskId: string; runId: string; files: string[]; patch: string })
@@ -103,6 +109,7 @@ export const WORK_ITEM_EVENT_TYPES: ReadonlySet<WorkItemEventType> = new Set<Wor
   'task_verified',
   'task_reverify_requested',
   'task_declined',
+  'task_merge_conflicted',
   'task_rework_started',
   'task_acceptance_tests_written',
   'task_tests_disputed',

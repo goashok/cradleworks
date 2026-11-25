@@ -182,7 +182,33 @@ export type Progress =
   | { kind: 'built'; outcome: BuildOutcome; attempt: number }
   | { kind: 'verified'; outcome: VerifyOutcome; attempt: number }
   | { kind: 'gate'; verdict: 'approved' | 'waiting'; mode: 'human' | 'ai' | 'skipped' }
-  | { kind: 'merged'; sha: string };
+  | { kind: 'merged'; sha: string }
+  /** The approved change conflicts with its base branch; the task goes back to be rebuilt on it. */
+  | { kind: 'merge_conflict'; reason: string };
+
+/**
+ * Thrown by `mergeTask` when the change conflicts with what has merged into its base since it
+ * was built. The task has already been sent back (or escalated, past its rework limit).
+ */
+export class MergeConflictError extends Error {
+  readonly taskId: string;
+  constructor(taskId: string, reason: string) {
+    super(reason);
+    this.name = 'MergeConflictError';
+    this.taskId = taskId;
+  }
+}
+
+/** What the implementer is told when its change is rebuilt on the current base after a conflict. */
+export function rebuildFeedback(base: string, branch: string, reason: string | undefined): string {
+  return [
+    '## Build it again on the current base',
+    '',
+    `Your earlier change for this task could not be merged: ${reason ?? `it conflicts with what has merged into ${base} since`}.`,
+    `This checkout starts from the current \`${base}\`, without your earlier change. Make the change again on top of it, keeping everything that is now on \`${base}\`: other tasks' work landed there.`,
+    `Your earlier change is still on \`origin/${branch}\`; see it with \`git diff origin/${base}...origin/${branch}\` and reuse what still fits.`,
+  ].join('\n');
+}
 
 export class Orchestrator {
   readonly #deps: OrchestratorDeps;
@@ -289,8 +315,13 @@ export class Orchestrator {
             continue;
           }
           if (!autoMerges(project, task)) return outcomeOf(task, false);
-          const sha = await this.mergeTask(given, workItemId, taskId);
-          onProgress({ kind: 'merged', sha });
+          try {
+            const sha = await this.mergeTask(given, workItemId, taskId);
+            onProgress({ kind: 'merged', sha });
+          } catch (error) {
+            if (!(error instanceof MergeConflictError)) throw error;
+            onProgress({ kind: 'merge_conflict', reason: error.message });
+          }
           continue;
         }
         default:
@@ -310,7 +341,9 @@ export class Orchestrator {
     const task = findTask(wi, taskId);
     const project = projectFor(given, task);
     const rework = task.state === 'rework';
-    const onBranch = rework && task.pr !== undefined;
+    // After a merge conflict the task is built again from the current base, not on its old branch.
+    const fresh = rework && task.rebuildOnBase === true;
+    const onBranch = rework && task.pr !== undefined && !fresh;
     const runId = this.#id('run');
     const branch = task.branch ?? `factory/${shortId(taskId)}`;
     const base = baseFor(project, wi, task);
@@ -349,7 +382,7 @@ export class Orchestrator {
 
       const spec = await this.#specFor(task);
       let specWritten: { path: string; content: string } | undefined;
-      if (spec && !rework && project.config.specs === 'repo' && !task.repo && wi.tasks[0]?.id === task.id) {
+      if (spec && (!rework || fresh) && project.config.specs === 'repo' && !task.repo && wi.tasks[0]?.id === task.id) {
         step = 'spec';
         const file = `.factory/specs/${specFileName(wi, spec)}`;
         mkdirSync(join(sandbox.workspacePath, '.factory', 'specs'), { recursive: true });
@@ -361,7 +394,11 @@ export class Orchestrator {
       step = 'agent';
       const taskText = `# ${task.title}\n\n${task.description ?? ''}`.trim() + (upstream ? `\n\n${upstream}` : '') + (spec ? `\n\n## The spec this task is part of\n\n${specBody(spec)}\n\nOther tasks may cover the rest of the spec; do only this task.` : '');
       const humanNote = task.lastReason && task.lastReason !== task.evidence?.reason ? task.lastReason : undefined;
-      const input = rework ? `${taskText}\n\n${reworkFeedback(task.evidence, humanNote, attempt, task.acceptanceTests)}` : taskText;
+      const input = fresh
+        ? `${taskText}\n\n${rebuildFeedback(base, branch, task.lastReason)}`
+        : rework
+          ? `${taskText}\n\n${reworkFeedback(task.evidence, humanNote, attempt, task.acceptanceTests)}`
+          : taskText;
       const limits = { maxWallSeconds: this.#deps.buildWallSeconds ?? 1800, maxSpendUsd: project.config.budgets.perTaskUsd };
       await log.write({ type: 'agent_started', agent: profile.agent, model: profile.model, limits });
       const done = await this.#runAgent(log, {
@@ -456,8 +493,9 @@ export class Orchestrator {
 
       step = 'push';
       assertFactoryBranch(branch);
-      // A rebuild after an interrupted run, with no PR yet, replaces whatever that run pushed.
-      await this.#deps.sourceControl.push(copy, branch, { replace: rework && !task.pr });
+      // A rebuild after an interrupted run, with no PR yet, replaces whatever that run pushed; so
+      // does a rebuild on the current base after a conflict, which the PR then shows instead.
+      await this.#deps.sourceControl.push(copy, branch, { replace: rework && (!task.pr || fresh) });
       await log.write({ type: 'branch_pushed', branch });
 
       let pr = task.pr;
@@ -1599,15 +1637,25 @@ export class Orchestrator {
       }
       // One merge at a time per repository: parallel tasks finish together, and a hosted
       // merge can refuse while the base branch is moving under it.
-      sha = await this.#withSlot(`merge:${project.repo.id}`, 1, async () => {
+      const merged = await this.#withSlot(`merge:${project.repo.id}`, 1, async () => {
         for (let attempt = 1; ; attempt++) {
           try {
             return (await this.#deps.sourceControl.merge(pr, { method: 'squash', expectedHeadSha: verified })).sha;
           } catch (error) {
+            if (error instanceof AdapterError && error.code === 'merge_conflict') return undefined;
             if (attempt >= 3 || !(error instanceof AdapterError) || error.code !== 'conflict' || !/base|lock|modified/i.test(error.message)) throw error;
           }
         }
       });
+      if (merged === undefined) {
+        // Other work merged into the base since this was built, and the two conflict: build it
+        // again on the current base rather than stop for a person.
+        const base = baseFor(project, wi, task);
+        const reason = `the change conflicts with what has merged into ${base} since it was built`;
+        await this.#emit(wi.id, [{ type: 'task_merge_conflicted', at: this.#clock(), taskId, base, reason }]);
+        throw new MergeConflictError(taskId, reason);
+      }
+      sha = merged;
     }
     await this.#emit(wi.id, [{ type: 'task_merged', at: this.#clock(), taskId, sha }]);
     await this.#showEnd(wi.id, given);
@@ -1659,8 +1707,13 @@ export class Orchestrator {
         await this.#emit(workItemId, [{ type: 'task_merged', at: this.#clock(), taskId: task.id, sha: status.headSha }]);
         notes.push(`${task.id}: merged on the pull request`);
       } else if (autoMerges(project, task)) {
-        const sha = await this.mergeTask(project, workItemId, task.id);
-        notes.push(`${task.id}: merged ${sha.slice(0, 12)}`);
+        try {
+          const sha = await this.mergeTask(project, workItemId, task.id);
+          notes.push(`${task.id}: merged ${sha.slice(0, 12)}`);
+        } catch (error) {
+          if (!(error instanceof MergeConflictError)) throw error;
+          notes.push(`${task.id}: ${error.message}; building it again on the current base`);
+        }
       }
     }
     await this.#showEnd(workItemId, project);

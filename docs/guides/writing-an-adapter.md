@@ -9,7 +9,9 @@ package. The core doesn't change.
 1. **Implement an interface from `@cradleworks/interfaces`.** That's all the core knows about.
 2. **Throw only `AdapterError`**, with a `code` (`not_found`, `conflict`, `invalid_input`,
    `unauthorized`, `rate_limited`, `unavailable`, `timeout`, …). The core decides whether to retry
-   from the code and `retryable`, never from vendor error text.
+   from the code and `retryable`, never from vendor error text. A source control adapter's `merge`
+   uses `merge_conflict` when the change conflicts with the base branch: the core then rebuilds
+   the task on the current base instead of stopping.
 3. **Pass the contract suite** from `@cradleworks/contracts` against a real instance. The adapter
    is done when its suite passes.
 4. **Register it** in `packages/cli/src/registry.ts` under an id that projects can name in

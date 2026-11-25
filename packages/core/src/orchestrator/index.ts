@@ -1,5 +1,7 @@
 export {
+  MergeConflictError,
   Orchestrator,
+  rebuildFeedback,
   type BuildOutcome,
   type OrchestratorDeps,
   type Progress,

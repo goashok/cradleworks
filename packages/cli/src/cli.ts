@@ -501,6 +501,9 @@ function printProgress(io: CliEnv, p: Progress): void {
     case 'merged':
       io.stdout(`Merged ${p.sha.slice(0, 12)}\n`);
       return;
+    case 'merge_conflict':
+      io.stdout(`Not merged: ${p.reason}. Building it again on the current base.\n`);
+      return;
   }
 }
 

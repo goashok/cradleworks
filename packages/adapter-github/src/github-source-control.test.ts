@@ -113,6 +113,16 @@ describe('merge', () => {
     await expectAdapterError(unmergeable.scm.merge(pr, { method: 'merge', expectedHeadSha: 'abc' }), 'conflict');
   });
 
+  it('maps a change that conflicts with the base to merge_conflict, and other refusals to conflict', async () => {
+    const pull = (extra: object) => ({ 'GET /repos/acme/shop/pulls/7': { body: { state: 'open', merged_at: null, base: { ref: 'main' }, ...extra } } });
+    const said = fakeGitHub({ ...pull({}), 'PUT /repos/acme/shop/pulls/7/merge': { status: 405, body: { message: 'Pull Request has merge conflicts' } } });
+    await expectAdapterError(said.scm.merge(pr, { method: 'squash', expectedHeadSha: 'abc' }), 'merge_conflict');
+    const dirty = fakeGitHub({ ...pull({ mergeable_state: 'dirty' }), 'PUT /repos/acme/shop/pulls/7/merge': { status: 405, body: { message: 'Pull Request is not mergeable' } } });
+    await expectAdapterError(dirty.scm.merge(pr, { method: 'squash', expectedHeadSha: 'abc' }), 'merge_conflict');
+    const blocked = fakeGitHub({ ...pull({ mergeable_state: 'blocked' }), 'PUT /repos/acme/shop/pulls/7/merge': { status: 405, body: { message: 'At least 1 approving review is required' } } });
+    await expectAdapterError(blocked.scm.merge(pr, { method: 'squash', expectedHeadSha: 'abc' }), 'conflict');
+  });
+
   it('refuses to merge a pull request that is already merged, without calling merge', async () => {
     const { scm, calls } = fakeGitHub({ 'GET /repos/acme/shop/pulls/7': { body: { state: 'closed', merged_at: '2026-11-21T12:00:00Z' } } });
     await expectAdapterError(scm.merge(pr, { method: 'squash', expectedHeadSha: 'abc' }), 'conflict');

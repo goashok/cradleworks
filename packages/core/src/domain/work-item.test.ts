@@ -232,6 +232,24 @@ describe('rework and escalation', () => {
     expect(task(granted, 't1').state).toBe('rework');
   });
 
+  it('sends a ready task that conflicts with its base back to be built on it, as a rework loop', () => {
+    const conflicted = ev({ type: 'task_merge_conflicted', taskId: 't1', base: 'main', reason: 'conflicts with main' });
+    const approved = [...planned(1), ...toReady('t1'), gate('change_approval', 't1')];
+    const once = build([...approved, conflicted]);
+    expect(task(once, 't1')).toMatchObject({ state: 'rework', reworkLoops: 1, rebuildOnBase: true, changeApproved: false, lastReason: 'conflicts with main' });
+    expect(once.state).toBe('in_progress');
+
+    // The rebuild clears the flag; a second conflict past the limit goes to a person.
+    const rebuilt = build([...approved, conflicted, ...rebuild('t1'), ev({ type: 'task_verified', taskId: 't1', verdict: 'pass', reason: 'ok' })]);
+    expect(task(rebuilt, 't1').state).toBe('ready');
+    expect(task(rebuilt, 't1')).not.toHaveProperty('rebuildOnBase');
+    const again = applyEvent(rebuilt, ev({ type: 'task_merge_conflicted', taskId: 't1', base: 'main', reason: 'conflicts again' }));
+    expect(task(again, 't1')).toMatchObject({ state: 'escalated', reworkLoops: 1 });
+    expect(task(again, 't1').rebuildOnBase).toBeUndefined();
+
+    expectIllegal(build(planned()), ev({ type: 'task_merge_conflicted', taskId: 't1', base: 'main', reason: 'x' }), /task_merge_conflicted/);
+  });
+
   it('escalates at once when the reviewer says so', () => {
     const wi = build([
       ...planned(),

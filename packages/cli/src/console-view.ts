@@ -221,6 +221,9 @@ export function story(wi: WorkItem, wiEvents: StoredEvent[]): StoryLine[] {
       case 'task_rework_started':
         add(`Reworking ${of(p.taskId)}.`, 'busy');
         break;
+      case 'task_merge_conflicted':
+        add(`${of(p.taskId)} could not merge: ${String(p.reason ?? '')}. Building it again on the current base.`, 'wait');
+        break;
       case 'task_tests_disputed':
         add(`The implementer disputed the acceptance tests for ${of(p.taskId)}; they were reviewed once.`, 'wait');
         break;

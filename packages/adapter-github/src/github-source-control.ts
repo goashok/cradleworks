@@ -135,10 +135,23 @@ export class GitHubSourceControl implements SourceControl {
     if (current.state !== 'open') {
       throw fail('conflict', 'merge', `pull request is ${current.merged_at ? 'merged' : 'closed'}`);
     }
-    const result = await this.#request<{ sha: string }>('merge', 'PUT', `/repos/${owner}/${name}/pulls/${number}/merge`, {
-      merge_method: options.method,
-      sha: options.expectedHeadSha,
-    });
+    let result: { sha: string };
+    try {
+      result = await this.#request<{ sha: string }>('merge', 'PUT', `/repos/${owner}/${name}/pulls/${number}/merge`, {
+        merge_method: options.method,
+        sha: options.expectedHeadSha,
+      });
+    } catch (error) {
+      // GitHub answers 405 both for a conflict with the base and for other refusals (a base that
+      // moved, branch protection); only the first needs the change rebuilt.
+      if (error instanceof AdapterError && error.code === 'conflict') {
+        const now = await this.#request<RawPull>('merge', 'GET', `/repos/${owner}/${name}/pulls/${number}`).catch(() => undefined);
+        if (/merge conflict/i.test(error.message) || now?.mergeable_state === 'dirty') {
+          throw fail('merge_conflict', 'merge', `the change conflicts with ${current.base?.ref ?? 'its base branch'}`, error);
+        }
+      }
+      throw error;
+    }
     return { sha: result.sha, url: `${this.#web}/${owner}/${name}/commit/${result.sha}` };
   }
 
@@ -223,6 +236,8 @@ interface RawPull {
   state: 'open' | 'closed';
   merged_at: string | null;
   mergeable: boolean | null;
+  /** `dirty` when the change conflicts with the base branch. */
+  mergeable_state?: string;
   head: { sha: string; ref: string };
   base: { ref: string };
 }

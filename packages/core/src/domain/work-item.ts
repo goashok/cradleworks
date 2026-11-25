@@ -135,6 +135,7 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       const task = findTask(wi, event.taskId, fail);
       expectTaskState(task, ['building'], fail);
       task.state = 'verifying';
+      delete task.rebuildOnBase;
       if (event.protectedPaths?.length) task.protectedPaths = [...new Set([...(task.protectedPaths ?? []), ...event.protectedPaths])].sort();
       break;
     }
@@ -180,6 +181,21 @@ function mutate(wi: WorkItem, event: WorkItemEvent): void {
       // Whatever is verified now is not what a person approved before.
       task.changeApproved = false;
       task.lastReason = event.reason;
+      break;
+    }
+
+    case 'task_merge_conflicted': {
+      const task = findTask(wi, event.taskId, fail);
+      expectTaskState(task, ['ready'], fail);
+      task.lastReason = event.reason;
+      task.changeApproved = false;
+      if (task.reworkLoops >= wi.maxReworkLoops + task.extraLoops) {
+        task.state = 'escalated';
+      } else {
+        task.reworkLoops += 1;
+        task.state = 'rework';
+        task.rebuildOnBase = true;
+      }
       break;
     }
 

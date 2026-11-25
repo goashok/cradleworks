@@ -59,6 +59,8 @@ export type FactoryStatus =
 export type AdapterErrorCode =
   | 'not_found'
   | 'conflict'
+  /** A merge that cannot happen because the change conflicts with its base branch. */
+  | 'merge_conflict'
   | 'unauthorized'
   | 'forbidden'
   | 'rate_limited'

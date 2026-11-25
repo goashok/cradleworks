@@ -105,8 +105,10 @@ export function gitlabError(response: Response, data: unknown, adapter: string, 
   else if (response.status === 401) code = 'unauthorized';
   else if (response.status === 403) code = 'forbidden';
   else if (response.status === 404) code = 'not_found';
-  // 405 not mergeable, 406 merge conflict, 409 already exists or the head moved.
-  else if (response.status === 405 || response.status === 406 || response.status === 409) code = 'conflict';
+  // 405 not mergeable, 409 already exists or the head moved; 406 is GitLab's answer to a merge
+  // whose change conflicts with the target branch.
+  else if (response.status === 406) code = 'merge_conflict';
+  else if (response.status === 405 || response.status === 409) code = 'conflict';
   else if (response.status === 400 || response.status === 422) code = /already exists/i.test(detail) ? 'conflict' : 'invalid_input';
   else if (response.status >= 500) code = 'unavailable';
   else code = 'unknown';

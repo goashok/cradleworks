@@ -57,12 +57,16 @@ export interface SourceControl {
   commit(copy: WorkingCopy, message: string, options?: { author?: Identity; paths?: string[] }): Promise<CommitRef>;
   /**
    * Pushes the branch to the same name. With `replace`, an existing remote branch is
-   * overwritten; the core only asks for that on branches it created and has no PR for.
+   * overwritten; the core only asks for that on its own branches: one with no PR yet, or one
+   * rebuilt on the current base after its change conflicted with it.
    */
   push(copy: WorkingCopy, branch: string, options?: { replace?: boolean }): Promise<void>;
   openPR(input: OpenPullRequestInput): Promise<PullRequestRef>;
   getPRStatus(pr: PullRequestRef): Promise<PullRequestStatus>;
-  /** Refuses (AdapterError `conflict`) if the head moved past `expectedHeadSha`. */
+  /**
+   * Refuses (AdapterError `conflict`) if the head moved past `expectedHeadSha`, and with
+   * `merge_conflict` if the change conflicts with the base branch.
+   */
   merge(pr: PullRequestRef, options: { method: MergeMethod; expectedHeadSha: string }): Promise<CommitRef>;
   comment(pr: PullRequestRef, body: string): Promise<CommentRef>;
 }

@@ -82,6 +82,13 @@ again.
 The loop stops at `budgets.max_rework_loops` (default 3). After that, the task **escalates** to
 you instead of looping forever.
 
+**When an approved change can't merge.** Tasks built in parallel can change the same lines. When
+one merges first, the other's pull request conflicts with the base branch. The factory doesn't
+stop for that: it builds the task again, this time **starting from the base branch as it now is**,
+tells the agent its earlier change didn't merge and where to find it, replaces the pull request's
+branch, and verifies it again. This counts as a rework loop, so a change that keeps conflicting
+still escalates.
+
 ## The change gate
 
 When Verify passes, `gates.change_approval` decides what happens:

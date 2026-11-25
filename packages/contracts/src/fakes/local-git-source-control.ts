@@ -151,7 +151,7 @@ export class LocalGitSourceControl implements SourceControl {
           await git(['merge', '--ff-only', 'cw-rebase'], work);
         }
       } catch (error) {
-        throw fail('conflict', 'merge', `cannot ${options.method} cleanly`, error);
+        throw fail('merge_conflict', 'merge', `cannot ${options.method} cleanly onto ${stored.base}`, error);
       }
       await this.#git(['push', '--quiet', 'origin', `HEAD:refs/heads/${stored.base}`], 'merge', work);
       const sha = (await this.#git(['rev-parse', 'HEAD'], 'merge', work)).trim();

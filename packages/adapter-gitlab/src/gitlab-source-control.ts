@@ -42,6 +42,7 @@ interface RawMR {
   source_branch: string;
   detailed_merge_status?: string;
   merge_status?: string;
+  has_conflicts?: boolean;
   updated_at: string;
   head_pipeline?: { status: string } | null;
   merge_commit_sha?: string | null;
@@ -137,6 +138,7 @@ export class GitLabSourceControl implements SourceControl {
     const current = await this.#api.request<RawMR>('merge', 'GET', base);
     if (current.state !== 'opened') throw fail('conflict', 'merge', `merge request is ${current.state}`);
     if (current.sha !== options.expectedHeadSha) throw fail('conflict', 'merge', `the head moved to ${current.sha.slice(0, 12)}`);
+    if (current.has_conflicts || current.detailed_merge_status === 'conflict') throw fail('merge_conflict', 'merge', `the change conflicts with ${current.target_branch}`);
     // GitLab merges with the project's merge method; squash is per request. Rebase is the project's setting.
     const merged = await this.#api.request<RawMR>('merge', 'PUT', `${base}/merge`, {
       sha: options.expectedHeadSha,
