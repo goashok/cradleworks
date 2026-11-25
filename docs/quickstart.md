@@ -218,7 +218,10 @@ gh auth login
 ```
 
 Without it, create a fine-grained token for the repository (Contents, Pull requests and Issues:
-read and write), keep it in your keychain and export it as `GITHUB_TOKEN`. When `git push` asks
+read and write; with `ci: github-actions`, Actions: read-only too), keep it in your keychain and
+export it as `GITHUB_TOKEN`. GitHub doesn't offer fine-grained tokens the Checks permission, so on
+a private repository the factory can't see other apps' checks on a pull request; it still reads
+GitHub Actions results through the Actions permission. When `git push` asks
 for a password, give it the token. See [Switch to GitHub](guides/add-a-project.md#4-switch-to-github).
 
 **Put the project on GitHub**, and make that repository its `origin`:

@@ -31,7 +31,11 @@ export interface Review {
   at: Timestamp;
 }
 
-export type ChecksState = 'none' | 'pending' | 'passing' | 'failing';
+/**
+ * The combined state of the checks and statuses on a pull request's head. `unknown` when the
+ * credentials may not read them, as with a token scoped too narrowly to see them.
+ */
+export type ChecksState = 'none' | 'pending' | 'passing' | 'failing' | 'unknown';
 
 export interface PullRequestStatus {
   ref: PullRequestRef;

@@ -95,6 +95,19 @@ describe('getPRStatus', () => {
     expect(await merged.scm.getPRStatus(pr)).toMatchObject({ state: 'merged', mergeable: false, checks: 'none' });
   });
 
+  it('reads the rest when the token may not read checks or statuses, as with a fine-grained token', async () => {
+    const forbidden = { status: 403, body: { message: 'Resource not accessible by personal access token' } };
+    const neither = fakeGitHub({ ...routes({ state: 'closed', merged_at: '2026-11-21T12:00:00Z' }), 'GET /repos/acme/shop/commits/abc/check-runs': forbidden, 'GET /repos/acme/shop/commits/abc/status': forbidden });
+    expect(await neither.scm.getPRStatus(pr)).toMatchObject({ state: 'merged', checks: 'unknown' });
+    // What it can read still counts: a failing status is failing, a passing one alone isn't proof.
+    const statusOnly = (state: string) => fakeGitHub({ ...routes({}, [], [{ state }]), 'GET /repos/acme/shop/commits/abc/check-runs': forbidden });
+    expect((await statusOnly('failure').scm.getPRStatus(pr)).checks).toBe('failing');
+    expect((await statusOnly('success').scm.getPRStatus(pr)).checks).toBe('unknown');
+    // Other errors still fail the read.
+    const broken = fakeGitHub({ ...routes({}), 'GET /repos/acme/shop/commits/abc/status': { status: 500, body: { message: 'boom' } } });
+    await expect(broken.scm.getPRStatus(pr)).rejects.toThrow();
+  });
+
   it('maps 404 to not_found', async () => {
     await expectAdapterError(fakeGitHub({}).scm.getPRStatus(pr), 'not_found');
   });

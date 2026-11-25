@@ -164,20 +164,26 @@ export class GitHubSourceControl implements SourceControl {
   // --- internals --------------------------------------------------------------
 
   async #checks(base: string, sha: string): Promise<ChecksState> {
-    const [runs, combined] = await Promise.all([
-      this.#request<{ check_runs: Array<{ status: string; conclusion: string | null }> }>('getPRStatus', 'GET', `${base}/commits/${sha}/check-runs?per_page=100`),
-      this.#request<{ statuses: Array<{ state: string }> }>('getPRStatus', 'GET', `${base}/commits/${sha}/status`),
+    // A fine-grained token can't be given Checks at all, and may lack Commit statuses: a read it
+    // may not make adds nothing, rather than failing every look at the pull request.
+    const refused = { refused: true } as const;
+    const allowed = <T>(read: Promise<T>) => read.catch((e: unknown) => (e instanceof AdapterError && e.code === 'forbidden' ? refused : Promise.reject(e)));
+    const [runsRead, combinedRead] = await Promise.all([
+      allowed(this.#request<{ check_runs: Array<{ status: string; conclusion: string | null }> }>('getPRStatus', 'GET', `${base}/commits/${sha}/check-runs?per_page=100`)),
+      allowed(this.#request<{ statuses: Array<{ state: string }> }>('getPRStatus', 'GET', `${base}/commits/${sha}/status`)),
     ]);
+    const runs = 'refused' in runsRead ? { check_runs: [] } : runsRead;
+    const combined = 'refused' in combinedRead ? { statuses: [] } : combinedRead;
     const states = [
       ...runs.check_runs.map((r) =>
         r.status !== 'completed' ? 'pending' : ['success', 'neutral', 'skipped'].includes(r.conclusion ?? '') ? 'passing' : 'failing',
       ),
       ...combined.statuses.map((s) => (s.state === 'success' ? 'passing' : s.state === 'pending' ? 'pending' : 'failing')),
     ];
-    if (states.length === 0) return 'none';
     if (states.includes('failing')) return 'failing';
     if (states.includes('pending')) return 'pending';
-    return 'passing';
+    if ('refused' in runsRead || 'refused' in combinedRead) return 'unknown';
+    return states.length === 0 ? 'none' : 'passing';
   }
 
   async #request<T>(operation: string, method: string, path: string, body?: unknown): Promise<T> {
