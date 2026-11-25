@@ -258,6 +258,9 @@ importers:
       '@cradleworks/interfaces':
         specifier: workspace:*
         version: link:../interfaces
+      '@cradleworks/runner':
+        specifier: workspace:*
+        version: link:../runner
       '@cradleworks/store-sqlite':
         specifier: workspace:*
         version: link:../store-sqlite
@@ -294,6 +297,22 @@ importers:
         version: link:../contracts
 
   packages/interfaces: {}
+
+  packages/runner:
+    dependencies:
+      '@cradleworks/core':
+        specifier: workspace:*
+        version: link:../core
+      '@cradleworks/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@cradleworks/adapter-local':
+        specifier: workspace:*
+        version: link:../adapter-local
+      '@cradleworks/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/store-sqlite:
     dependencies:

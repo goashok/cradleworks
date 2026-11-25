@@ -20,6 +20,7 @@
     "@cradleworks/contracts": "workspace:*",
     "@cradleworks/core": "workspace:*",
     "@cradleworks/interfaces": "workspace:*",
+    "@cradleworks/runner": "workspace:*",
     "@cradleworks/store-sqlite": "workspace:*"
   }
 }

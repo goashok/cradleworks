@@ -51,6 +51,12 @@ export class FakeTracker implements Tracker {
     return ref;
   }
 
+  /** A person takes a label off. */
+  removeLabel(item: ItemRef, label: string): void {
+    const it = this.#get(item, 'removeLabel');
+    it.labels = it.labels.filter((l) => l !== label);
+  }
+
   allowApprover(handle: string): void {
     this.#approvers.add(handle);
   }

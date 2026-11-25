@@ -6,10 +6,11 @@ import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { ConfigError, DENIED_COMMANDS, KNOWN_CI_PATHS, KNOWN_SECRET_PATTERNS, loadProjectConfig } from '@cradleworks/config';
-import { Orchestrator, TERMINAL_WORK_ITEM_STATES, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem, type WorkProgress } from '@cradleworks/core';
-import { AGENT_ROLES, type AgentRuntime, type CI, type ItemRef, type Tracker } from '@cradleworks/interfaces';
+import { Orchestrator, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem, type WorkProgress } from '@cradleworks/core';
+import { AGENT_ROLES, type AgentRuntime, type CI, type Tracker } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
+import { recoverOpenWork, runPass, type PassEvent } from '@cradleworks/runner';
 import { formatLog } from './log.ts';
 import { checkRequirements, checkSkills, skillsCommand, type RequirementRunner } from './skills.ts';
 import { checkDrill, runDrill } from './drill.ts';
@@ -978,16 +979,15 @@ async function watch(args: string[], io: CliEnv): Promise<number> {
       }
     }
     for (const ctx of contexts) {
-      for (const wi of await openFromTracker(ctx)) {
-        for (const note of await ctx.orchestrator.recoverWorkItem(wi.id)) io.stdout(`${labelOf(wi)} recovered: ${note}\n`);
-      }
+      for (const { workItem, note } of await recoverOpenWork(ctx)) io.stdout(`${labelOf(workItem)} recovered: ${note}\n`);
       io.stdout(`Watching ${ctx.project.repo.id} for open issues labelled "${label}"${values.once ? ' (once)' : `, every ${interval}s`}\n`);
     }
-    const waiting = new Map<string, string>();
+    const lastState = new Map<string, string>();
     for (;;) {
       for (const ctx of contexts) {
         if (io.signal?.aborted) break;
-        await watchCycle(ctx, label, io, waiting);
+        const repoId = ctx.project.repo.id;
+        await runPass({ project: ctx.project, orchestrator: ctx.orchestrator, tracker: ctx.tracker! }, { label, lastState, report: (e) => printPassEvent(io, repoId, e) });
       }
       if (values.once || io.signal?.aborted) break;
       await sleep(interval * 1000, io.signal);
@@ -1000,51 +1000,25 @@ async function watch(args: string[], io: CliEnv): Promise<number> {
   }
 }
 
-async function watchCycle(ctx: ProjectContext, label: string, io: CliEnv, waiting: Map<string, string>): Promise<void> {
-  const tracker = ctx.tracker!;
-  const project = ctx.project;
-  let open: ItemRef[];
-  try {
-    open = await tracker.listOpen({ project: project.repo.id, labels: [label] });
-  } catch (error) {
-    io.stderr(`${project.repo.id}: cannot list issues: ${(error as Error).message}\n`);
-    return;
+/** Prints what a watch pass reports, one line per event, prefixed with the issue number. */
+function printPassEvent(io: CliEnv, repoId: string, e: PassEvent): void {
+  switch (e.kind) {
+    case 'list_failed':
+      return io.stderr(`${repoId}: cannot list issues: ${e.error}\n`);
+    case 'picked_up':
+      return io.stdout(`${shortLabel(e.item.id)} picked up as ${e.workItemId}\n`);
+    case 'cancelled':
+      return io.stdout(`${labelOf(e.workItem)} cancelled: ${e.reason}\n`);
+    case 'synced':
+      return io.stdout(`${labelOf(e.workItem)} ${e.note}\n`);
+    case 'progress':
+      return printWorkProgress(io, labelOf(e.workItem), e.progress);
+    case 'state':
+      if (e.changed) io.stdout(`${labelOf(e.workItem)} ${e.waitingFor ? `${e.state}, waiting for ${e.waitingFor}` : e.state}\n`);
+      return;
+    case 'error':
+      return io.stderr(`${labelOf(e.workItem)} stopped on an error: ${e.error}\n`);
   }
-  for (const ref of open) {
-    const { workItemId, created } = await ctx.orchestrator.receiveItem(project, ref);
-    if (created) io.stdout(`${shortLabel(ref.id)} picked up as ${workItemId}\n`);
-  }
-  const listed = new Set(open.map((r) => r.id));
-  const items = await openFromTracker(ctx);
-  const work: WorkItem[] = [];
-  for (const wi of items) {
-    if (listed.has(wi.source.id)) {
-      work.push(wi);
-      continue;
-    }
-    // Not listed: closed (cancel the work), or the label was taken off (paused).
-    const item = await tracker.getItem(wi.source).catch(() => undefined);
-    if (item?.state === 'closed') {
-      await ctx.orchestrator.cancelWorkItem(wi.id, 'the issue was closed');
-      io.stdout(`${labelOf(wi)} cancelled: the issue was closed\n`);
-    }
-  }
-  await pool(work, project.config.concurrency, async (wi) => {
-    const prefix = labelOf(wi);
-    try {
-      for (const note of await ctx.orchestrator.syncWorkItem(project, wi.id)) io.stdout(`${prefix} ${note}\n`);
-      const outcome = await ctx.orchestrator.runWorkItem(project, wi.id, (p) => printWorkProgress(io, prefix, p));
-      const now = outcome.waitingFor ? `${outcome.state}, waiting for ${outcome.waitingFor}` : outcome.state;
-      if (waiting.get(wi.id) !== now) io.stdout(`${prefix} ${now}\n`);
-      waiting.set(wi.id, now);
-    } catch (error) {
-      io.stderr(`${prefix} stopped on an error: ${(error as Error).message}\n`);
-    }
-  });
-}
-
-async function openFromTracker(ctx: ProjectContext): Promise<WorkItem[]> {
-  return (await ctx.orchestrator.listWorkItems(ctx.project.config.project)).filter((wi) => !wi.source.id.startsWith('submitted:') && !TERMINAL_WORK_ITEM_STATES.has(wi.state)).reverse();
 }
 
 function printWorkProgress(io: CliEnv, prefix: string, p: WorkProgress): void {
@@ -1102,15 +1076,6 @@ function alive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>): Promise<void> {
-  const queue = [...items];
-  await Promise.all(
-    Array.from({ length: Math.min(size, queue.length) }, async () => {
-      for (let next = queue.shift(); next !== undefined; next = queue.shift()) await fn(next);
-    }),
-  );
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

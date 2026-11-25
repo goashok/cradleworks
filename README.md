@@ -144,6 +144,7 @@ packages/
   adapter-github/       SourceControl for GitHub
   adapter-local/        Sandbox: git worktree + Docker container + egress proxy
   adapter-claude-code/  AgentRuntime: Claude Code, headless, inside the sandbox
+  runner/               one pass over a project's issues; `factory watch` runs it on a timer
   cli/                  the `factory` command
 defaults/factory.yaml   defaults for any key a project leaves out
 examples/hello-node/    the quick start project
