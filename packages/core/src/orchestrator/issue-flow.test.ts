@@ -356,7 +356,7 @@ describe('issue flow', () => {
 
   it('shows the end on the issue when a person merges the last task outside watch', async () => {
     const o = orchestrator({ planner: () => [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2, 3] }] })] });
-    const human = { ...project, config: { ...baseConfig, gates: { ...baseConfig.gates, specApproval: 'skipped' as const, changeApproval: 'human' as const } } };
+    const human = { ...project, config: { ...baseConfig, issues: { closeWhenDone: true }, gates: { ...baseConfig.gates, specApproval: 'skipped' as const, changeApproval: 'human' as const } } };
     const ref = issue();
     const { workItemId } = await o.receiveItem(human, ref);
     expect((await o.runWorkItem(human, workItemId)).state).toBe('awaiting_change_approval');
@@ -367,9 +367,25 @@ describe('issue flow', () => {
     expect(tracker.statusesOf(ref).at(-1)).toBe('merged');
     const done = (await tracker.getItem(ref)).comments.filter((c) => c.body.includes('Done: 1 pull request merged'));
     expect(done).toHaveLength(1);
+    expect((await tracker.getItem(ref)).state).toBe('closed');
     // A later pass that does reach it says nothing twice.
     await o.runWorkItem(human, workItemId);
     expect((await tracker.getItem(ref)).comments.filter((c) => c.body.includes('Done:'))).toHaveLength(1);
+  });
+
+  it.each([
+    { closeWhenDone: true, followUps: [], state: 'closed' },
+    { closeWhenDone: false, followUps: [], state: 'open' },
+    { closeWhenDone: true, followUps: ['Publish the release'], state: 'open' },
+  ])('when everything merged, close_when_done $closeWhenDone and follow-ups $followUps leave the issue $state', async ({ closeWhenDone, followUps, state }) => {
+    const o = orchestrator({ planner: () => [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2, 3] }], follow_ups: followUps })] });
+    const p = { ...project, config: { ...baseConfig, issues: { closeWhenDone }, gates: { ...baseConfig.gates, specApproval: 'skipped' as const } } };
+    const ref = issue();
+    const { workItemId } = await o.receiveItem(p, ref);
+    expect((await o.runWorkItem(p, workItemId)).state).toBe('merged');
+    const item = await tracker.getItem(ref);
+    expect(item.comments.some((c) => c.body.includes('Done: 1 pull request merged'))).toBe(true);
+    expect(item.state).toBe(state);
   });
 
   it('builds on the branch the issue names', async () => {

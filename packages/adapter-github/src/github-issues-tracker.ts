@@ -163,6 +163,11 @@ export class GitHubIssuesTracker implements Tracker {
     if (!current.some((l) => l.name === wanted)) await this.#request('setStatus', 'POST', `/repos/${owner}/${name}/issues/${number}/labels`, { labels: [wanted] });
   }
 
+  async close(item: ItemRef): Promise<void> {
+    const { owner, name, number } = parseItem(item, 'close');
+    await this.#request('close', 'PATCH', `/repos/${owner}/${name}/issues/${number}`, { state: 'closed', state_reason: 'completed' });
+  }
+
   async link(item: ItemRef, target: TrackerLink): Promise<void> {
     const what = { pull_request: 'Pull request', spec: 'Spec', run: 'Run' }[target.kind];
     await this.comment(item, `🔗 ${what}: [${target.title ?? target.url}](${target.url})`);

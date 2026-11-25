@@ -26,6 +26,9 @@ verify:
 
 related_repos: []       # other repos (paths from this one) the planner may give tasks to
 
+issues:
+  close_when_done: true # close the issue once every task merged and nothing is left for a person
+
 protected_paths: []     # more paths whose changes need a person and are never auto-merged;
                         # CI config, .factory/ and CODEOWNERS are always protected
 

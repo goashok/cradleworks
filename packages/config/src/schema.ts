@@ -142,6 +142,11 @@ export const FACTORY_YAML: Field = {
       },
     },
     related_repos: { kind: 'stringList', required: true },
+    issues: {
+      kind: 'object',
+      required: true,
+      fields: { close_when_done: { kind: 'boolean', required: true } },
+    },
     protected_paths: { kind: 'stringList', required: true },
     sandbox: {
       kind: 'object',

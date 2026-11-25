@@ -135,6 +135,11 @@ export class GitLabIssuesTracker implements Tracker {
     await this.#api.request('setStatus', 'PUT', `/projects/${projectId(path)}/issues/${iid}`, { add_labels: wanted, ...(stale.length ? { remove_labels: stale.join(',') } : {}) });
   }
 
+  async close(item: ItemRef): Promise<void> {
+    const { path, iid } = parseItem(item, 'close');
+    await this.#api.request('close', 'PUT', `/projects/${projectId(path)}/issues/${iid}`, { state_event: 'close' });
+  }
+
   async link(item: ItemRef, target: TrackerLink): Promise<void> {
     const what = { pull_request: 'Merge request', spec: 'Spec', run: 'Run' }[target.kind];
     await this.comment(item, `🔗 ${what}: [${target.title ?? target.url}](${target.url})`);

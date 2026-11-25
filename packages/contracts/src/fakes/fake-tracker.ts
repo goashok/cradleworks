@@ -55,7 +55,8 @@ export class FakeTracker implements Tracker {
     this.#approvers.add(handle);
   }
 
-  close(item: ItemRef): void {
+  /** Closes it now (the state changes before the promise is awaited, as tests rely on). */
+  async close(item: ItemRef): Promise<void> {
     this.#get(item, 'close').state = 'closed';
   }
 

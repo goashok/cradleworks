@@ -68,6 +68,8 @@ export interface ProjectConfig {
   };
   /** Other repositories, by local path from this one, that the planner may give tasks to. */
   relatedRepos: string[];
+  /** Work items from issues: close the issue when every task merged and nothing is left for a person. */
+  issues?: { closeWhenDone: boolean };
   /** Paths, beyond the built-in ones, whose changes need a person and are never auto-merged. */
   protectedPaths?: string[];
   /** Commands, beyond the built-in ones, agents may not run in the sandbox. */

@@ -166,6 +166,7 @@ interface RawConfig {
   concurrency: number;
   verify: { tester: boolean; agent_checks?: Record<string, { skill: string; blocks?: boolean; max_share?: number; agent?: string; model?: string }> };
   related_repos: string | string[];
+  issues: { close_when_done: boolean };
   protected_paths: string | string[];
   sandbox: { network: { mode: 'none' | 'allowlist'; allow: string | string[] }; commands: { deny: string | string[] } };
 }
@@ -225,6 +226,7 @@ function toProjectConfig(raw: RawConfig): ProjectConfig {
       })),
     },
     relatedRepos: list(raw.related_repos),
+    issues: { closeWhenDone: raw.issues.close_when_done },
     protectedPaths: list(raw.protected_paths),
     commands: { deny: list(raw.sandbox.commands.deny) },
     network: { mode: raw.sandbox.network.mode, allow: list(raw.sandbox.network.allow) },

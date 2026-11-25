@@ -49,6 +49,8 @@ export interface Tracker {
   getItem(item: ItemRef): Promise<TrackerItem>;
   comment(item: ItemRef, body: string): Promise<CommentRef>;
   setStatus(item: ItemRef, status: FactoryStatus): Promise<void>;
+  /** Closes the item as completed. */
+  close(item: ItemRef): Promise<void>;
   link(item: ItemRef, target: TrackerLink): Promise<void>;
   /** True when `handle` may decide gates on this item (for a code host: write access to the repo). */
   canApprove(item: ItemRef, handle: string): Promise<boolean>;

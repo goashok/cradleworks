@@ -49,6 +49,7 @@ const fakes = {
     getItem: notImplemented,
     comment: notImplemented,
     setStatus: notImplemented,
+    close: notImplemented,
     link: notImplemented,
     canApprove: notImplemented,
     listOpen: notImplemented,

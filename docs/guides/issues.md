@@ -138,7 +138,13 @@ that were waiting for it.
 **Done.** When every task has merged, the factory comments `Done: 3 pull requests merged` with
 the list, and anything left for a person, and labels the issue `factory:merged`. That happens
 whichever way the last merge was made: by `watch`, by `factory approve --merge`, or on the pull
-request followed by `factory sync`. The issue itself stays open, so close it when you're happy.
+request followed by `factory sync`.
+
+Then, if nothing is left for a person, the factory closes the issue, as GitHub does for a pull
+request that says `Closes #12`. If the plan left steps for a person, the issue stays open until
+someone has done them and closes it. Teams that close issues only after a release or a check of
+their own can turn this off with `issues.close_when_done: false`. A closed issue is reopened like
+any other; the factory doesn't pick finished work up again.
 
 ## Write an issue, review a spec
 

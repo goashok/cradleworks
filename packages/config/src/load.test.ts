@@ -89,11 +89,16 @@ describe('valid config', () => {
     expect(config.network).toEqual({ mode: 'allowlist', allow: [] });
     expect(config.concurrency).toBe(2);
     expect(config.specs).toBe('repo');
+    expect(config.issues).toEqual({ closeWhenDone: true });
   });
 
   it('lets the project override a single nested key', () => {
     const config = parseProjectConfig(project(`${MINIMAL}gates:\n  change_approval: ai\n  auto_merge: true\n`), DEFAULTS);
     expect(config.gates).toEqual({ specApproval: 'human', planCheck: 'ai', changeApproval: 'ai', autoMerge: true });
+  });
+
+  it('turns off closing issues when done', () => {
+    expect(parseProjectConfig(project(`${MINIMAL}issues:\n  close_when_done: false\n`), DEFAULTS).issues).toEqual({ closeWhenDone: false });
   });
 
   it('maps skip to the core gate mode', () => {

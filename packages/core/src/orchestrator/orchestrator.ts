@@ -289,7 +289,7 @@ export class Orchestrator {
             continue;
           }
           if (!autoMerges(project, task)) return outcomeOf(task, false);
-          const sha = await this.mergeTask(project, workItemId, taskId);
+          const sha = await this.mergeTask(given, workItemId, taskId);
           onProgress({ kind: 'merged', sha });
           continue;
         }
@@ -747,7 +747,7 @@ export class Orchestrator {
       const wi = await this.#mustLoad(workItemId);
       await this.#showStatus(wi);
       if (TERMINAL_WORK_ITEM_STATES.has(wi.state)) {
-        await this.#announceEnd(wi);
+        await this.#announceEnd(wi, project);
         onProgress({ kind: 'done', state: wi.state });
         return { state: wi.state };
       }
@@ -1508,7 +1508,11 @@ export class Orchestrator {
     }
   }
 
-  async #announceEnd(wi: WorkItem): Promise<void> {
+  /**
+   * The closing comment on the issue; with `issues.close_when_done`, a work item whose tasks all
+   * merged, with nothing left for a person, also closes it.
+   */
+  async #announceEnd(wi: WorkItem, project?: Project): Promise<void> {
     if (!this.#deps.tracker || !fromTracker(wi) || this.#announced.has(wi.id)) return;
     this.#announced.add(wi.id);
     const tag = gateTag('blocked', 'done').replace('blocked', 'done');
@@ -1520,6 +1524,9 @@ export class Orchestrator {
         ? `Done: ${merged.length} pull request${merged.length > 1 ? 's' : ''} merged.\n\n${merged.map((t) => `- ${t.title}${t.pr ? `: ${t.pr.url}` : ''}`).join('\n')}${wi.followUps?.length ? `\n\n${followUpsMarkdown(wi.followUps, 'Still to do, by a person')}` : ''}`
         : `Stopped: ${wi.state}${wi.endReason ? ` (${wi.endReason})` : ''}.`;
     await this.#say(wi.source, `${tag}\n${text}`);
+    if (wi.state === 'merged' && !wi.followUps?.length && project?.config.issues?.closeWhenDone && item.state === 'open') {
+      await this.#deps.tracker.close(wi.source).catch(() => undefined);
+    }
   }
 
   /** A person approves a ready task at the change gate; merges when asked or when auto_merge is on. */
@@ -1531,7 +1538,7 @@ export class Orchestrator {
     if (!task.changeApproved) {
       await this.#decideChange(wi, task, { mode: 'human', verdict: 'approved', decidedBy: input.by, reason: input.reason?.trim() || 'approved from the CLI' });
     }
-    if (input.merge || autoMerges(project, task)) return { merged: await this.mergeTask(project, workItemId, taskId) };
+    if (input.merge || autoMerges(project, task)) return { merged: await this.mergeTask(given, workItemId, taskId) };
     return {};
   }
 
@@ -1565,11 +1572,11 @@ export class Orchestrator {
    * When a work item from an issue has just ended outside `runWorkItem` (a merge from the CLI,
    * `sync`, a cancel), shows it on the issue now: `watch` doesn't revisit finished work items.
    */
-  async #showEnd(workItemId: string): Promise<void> {
+  async #showEnd(workItemId: string, project?: Project): Promise<void> {
     const wi = await this.#mustLoad(workItemId);
     if (!TERMINAL_WORK_ITEM_STATES.has(wi.state)) return;
     await this.#showStatus(wi);
-    await this.#announceEnd(wi).catch(() => undefined);
+    await this.#announceEnd(wi, project).catch(() => undefined);
   }
 
   /** Merges an approved task's PR, refusing if its head moved since Verify passed it. */
@@ -1603,7 +1610,7 @@ export class Orchestrator {
       });
     }
     await this.#emit(wi.id, [{ type: 'task_merged', at: this.#clock(), taskId, sha }]);
-    await this.#showEnd(wi.id);
+    await this.#showEnd(wi.id, given);
     return sha;
   }
 
@@ -1656,7 +1663,7 @@ export class Orchestrator {
         notes.push(`${task.id}: merged ${sha.slice(0, 12)}`);
       }
     }
-    await this.#showEnd(workItemId);
+    await this.#showEnd(workItemId, project);
     return notes;
   }
 
