@@ -141,6 +141,7 @@ packages/
   contracts/            contract test suites every adapter must pass, plus working fakes
   config/               loads .factory/factory.yaml over defaults/factory.yaml
   store-sqlite/         StateStore: append-only event log on SQLite
+  store-postgres/       StateStore on PostgreSQL, for a factory run as a service
   adapter-github/       SourceControl for GitHub
   adapter-local/        Sandbox: git worktree + Docker container + egress proxy
   adapter-claude-code/  AgentRuntime: Claude Code, headless, inside the sandbox

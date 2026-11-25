@@ -1,0 +1,20 @@
+{
+  "name": "@cradleworks/store-postgres",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StateStore backed by PostgreSQL, for a hosted or self-managed factory",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@cradleworks/interfaces": "workspace:*",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@cradleworks/adapter-local": "workspace:*",
+    "@cradleworks/contracts": "workspace:*",
+    "@cradleworks/core": "workspace:*",
+    "@types/pg": "8.23.1"
+  }
+}
