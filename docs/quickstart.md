@@ -205,11 +205,91 @@ Or send it back with what to change, and watch the rework:
 `factory reject <task-id> --reason "Also export it from index.js"`. See
 [Verify, rework and approve](guides/verify-and-approve.md).
 
+## 8. Move hello-node to GitHub
+
+So far the "remote" was a folder on your disk. On GitHub you get real pull requests, and you
+can hand the factory work as an issue. This takes about ten minutes more.
+
+**Sign in to GitHub.** The factory uses `GITHUB_TOKEN` if it's set, otherwise your GitHub CLI
+login. With the [GitHub CLI](https://cli.github.com/) (`brew install gh` on a Mac):
+
+```sh
+gh auth login
+```
+
+Without it, create a fine-grained token for the repository (Contents, Pull requests and Issues:
+read and write), keep it in your keychain and export it as `GITHUB_TOKEN`. When `git push` asks
+for a password, give it the token. See [Switch to GitHub](guides/add-a-project.md#4-switch-to-github).
+
+**Put the project on GitHub**, and make that repository its `origin`:
+
+```sh
+cd ~/hello-node
+gh repo create hello-node --private --source . --remote github
+git remote remove origin && git remote rename github origin
+git push -u origin main
+```
+
+(Without `gh`: create an empty repository on github.com, then
+`git remote set-url origin https://github.com/<you>/hello-node.git` and `git push -u origin main`.)
+
+**Point the factory at GitHub.** In `.factory/factory.yaml`, change three adapters:
+
+```yaml
+adapters:
+  scm: github             # was local-git: branches and pull requests on GitHub
+  ci: none                # github-actions once the repo has a workflow
+  tracker: github-issues  # was none: factory watch reads issues
+```
+
+With `ci: github-actions`, Verify also waits for the repository's workflow runs on each change,
+and a failed run sends the change back. Hello-node has no workflow, so leave CI off for now.
+
+```console
+$ git commit -qam "Use GitHub" && git push -q
+$ factory validate
+.: project hello-node, 1 rule file(s), image cradleworks/hello-node-dev:1
+ok
+```
+
+**Hand it an issue.** Create the label the factory looks for, then open an issue with it:
+
+```sh
+gh label create factory --description "Work for the factory"
+gh issue create --label factory --title "Add a shout function" \
+  --body "Add shout(name) in src/greet.js: the greeting in capitals, with a test."
+```
+
+Then start the factory in the project and leave it running:
+
+```console
+$ factory watch
+Watching you/hello-node for open issues labelled "factory", every 60s
+```
+
+On the issue you'll see it work. A `factory:<state>` label always shows where it stands.
+
+1. It comments `Picked up as wi_…`, then posts a **spec** with acceptance criteria. It may first
+   ask a few questions; answer them in a comment.
+2. Reply **`/approve`** in a comment (or `/reject <what to change>`). Only people with write access
+   to the repository can decide.
+3. It posts the **plan**, which an AI checker approves by default, then builds each task as its
+   own **pull request** and links it on the issue.
+4. **Approve and merge** each pull request: click *Merge pull request* on GitHub, use **Approve and
+   merge** in `factory console`, or run `factory approve <task-id> --merge`. (GitHub doesn't let you
+   approve your own pull request as a review, and the factory opened it as you, so merging is how
+   you say yes there.)
+5. When everything has merged, it comments `Done`, labels the issue `factory:merged` and closes it.
+
+A task you write yourself still works too: `factory submit <file>.md`, as in step 5, now opens a
+pull request on GitHub. More in [From an issue to merged PRs](guides/issues.md).
+
 ## Clean up
 
 ```sh
 rm -rf ~/hello-node ~/hello-node-remote.git
 docker image rm cradleworks/hello-node-dev:1
+gh repo delete hello-node        # if you did step 8; needs `gh auth refresh -s delete_repo`
 ```
 
 Factory state lives in `~/.cradleworks`. Delete it to forget every run, or set `CRADLEWORKS_HOME`
