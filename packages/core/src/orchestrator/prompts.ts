@@ -3,6 +3,13 @@
 
 import type { ProjectConfig } from '../config/types.ts';
 
+/**
+ * For every agent that runs the project's commands. Agents have waited on a build with
+ * `while pgrep -f <name>; do sleep 5; done`, which matches its own command line and never ends.
+ */
+export const WAITING_RULE =
+  'Run commands in the foreground and let them finish. Never wait for another process with a loop over `pgrep -f`, `ps | grep` or similar: the loop\'s own command line matches the pattern, so it never ends.';
+
 export function implementerPrompt(config: ProjectConfig, contextFiles: string[]): string {
   const commands = Object.entries(config.stack.commands)
     .filter((entry): entry is [string, string] => entry[1] !== undefined)
@@ -20,6 +27,7 @@ export function implementerPrompt(config: ProjectConfig, contextFiles: string[])
     commands,
     '',
     'Run the build and the tests before you finish, and fix what fails.',
+    WAITING_RULE,
     'Do not commit, push or open pull requests: the factory does that after you finish.',
     'Finish with a short summary of what you changed and why.',
   ].join('\n');

@@ -6,6 +6,7 @@ import type { SpecDocument, TrackerComment, TrackerItem } from '@cradleworks/int
 import type { ProjectConfig } from '../config/types.ts';
 import type { TaskSize } from '../domain/types.ts';
 import { extractJson } from './verify.ts';
+import { WAITING_RULE } from './prompts.ts';
 
 export const MAX_QUESTIONS = 5;
 export const MAX_TASKS = 8;
@@ -336,6 +337,7 @@ export function testerPrompt(config: ProjectConfig, contextFiles: string[]): str
     'Assert only what the spec requires. Where it leaves a detail open (exact wording, formatting, order, extra fields, which of several valid approaches), accept any answer the spec allows; an implementer will rightly refuse to satisfy a test the spec does not support.',
     'Run your tests once before you finish. They may fail only because the feature is missing (an unknown endpoint, function or type, or a failed assertion), never because of a mistake in the test code itself, such as a wrong type, import or call of the test library.',
     'A test that searches the repository must leave out `.factory/`, where the factory keeps the spec itself.',
+    WAITING_RULE,
     'Do not implement the feature. Finish with a one-paragraph summary of what each test checks.',
   ].join('\n');
 }
