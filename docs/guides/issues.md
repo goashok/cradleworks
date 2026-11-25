@@ -136,8 +136,9 @@ Approve it on the PR (or `factory approve <task>`), and merge it yourself or wit
 that were waiting for it.
 
 **Done.** When every task has merged, the factory comments `Done: 3 pull requests merged` with
-the list, and anything left for a person, and labels the issue `factory:merged`. The issue itself
-stays open, so close it when you're happy.
+the list, and anything left for a person, and labels the issue `factory:merged`. That happens
+whichever way the last merge was made: by `watch`, by `factory approve --merge`, or on the pull
+request followed by `factory sync`. The issue itself stays open, so close it when you're happy.
 
 ## Write an issue, review a spec
 

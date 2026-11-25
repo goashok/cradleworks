@@ -1558,6 +1558,18 @@ export class Orchestrator {
   async cancelWorkItem(workItemId: string, reason: string): Promise<void> {
     const wi = await this.#mustLoad(workItemId);
     await this.#emit(wi.id, [{ type: 'work_item_cancelled', at: this.#clock(), reason: reason.trim() || 'cancelled from the CLI' }]);
+    await this.#showEnd(wi.id);
+  }
+
+  /**
+   * When a work item from an issue has just ended outside `runWorkItem` (a merge from the CLI,
+   * `sync`, a cancel), shows it on the issue now: `watch` doesn't revisit finished work items.
+   */
+  async #showEnd(workItemId: string): Promise<void> {
+    const wi = await this.#mustLoad(workItemId);
+    if (!TERMINAL_WORK_ITEM_STATES.has(wi.state)) return;
+    await this.#showStatus(wi);
+    await this.#announceEnd(wi).catch(() => undefined);
   }
 
   /** Merges an approved task's PR, refusing if its head moved since Verify passed it. */
@@ -1591,6 +1603,7 @@ export class Orchestrator {
       });
     }
     await this.#emit(wi.id, [{ type: 'task_merged', at: this.#clock(), taskId, sha }]);
+    await this.#showEnd(wi.id);
     return sha;
   }
 
@@ -1643,6 +1656,7 @@ export class Orchestrator {
         notes.push(`${task.id}: merged ${sha.slice(0, 12)}`);
       }
     }
+    await this.#showEnd(workItemId);
     return notes;
   }
 

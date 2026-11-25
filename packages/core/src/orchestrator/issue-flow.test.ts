@@ -354,6 +354,24 @@ describe('issue flow', () => {
     expect(bodies.find((b) => b.includes('Done:'))).toContain(`**Still to do, by a person:**\n\n- ${follow}`);
   });
 
+  it('shows the end on the issue when a person merges the last task outside watch', async () => {
+    const o = orchestrator({ planner: () => [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2, 3] }] })] });
+    const human = { ...project, config: { ...baseConfig, gates: { ...baseConfig.gates, specApproval: 'skipped' as const, changeApproval: 'human' as const } } };
+    const ref = issue();
+    const { workItemId } = await o.receiveItem(human, ref);
+    expect((await o.runWorkItem(human, workItemId)).state).toBe('awaiting_change_approval');
+    const [task] = (await o.getWorkItem(workItemId))!.tasks;
+    // As `factory approve --merge` does: no runWorkItem afterwards, and watch skips finished work.
+    await o.approveTask(human, workItemId, task!.id, { by: 'sam', merge: true });
+    expect((await o.getWorkItem(workItemId))!.state).toBe('merged');
+    expect(tracker.statusesOf(ref).at(-1)).toBe('merged');
+    const done = (await tracker.getItem(ref)).comments.filter((c) => c.body.includes('Done: 1 pull request merged'));
+    expect(done).toHaveLength(1);
+    // A later pass that does reach it says nothing twice.
+    await o.runWorkItem(human, workItemId);
+    expect((await tracker.getItem(ref)).comments.filter((c) => c.body.includes('Done:'))).toHaveLength(1);
+  });
+
   it('builds on the branch the issue names', async () => {
     await git(['--git-dir', bare, 'branch', 'release/2', 'main']);
     const o = orchestrator({ planner: () => [json({ tasks: [{ ...PLAN.tasks[0], criteria: [1, 2, 3] }] })] });
