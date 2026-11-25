@@ -132,6 +132,8 @@ Don't list them yourself.
 | Variable | Meaning |
 | --- | --- |
 | `CRADLEWORKS_HOME` | Where state lives. Default `~/.cradleworks`. |
+| `CRADLEWORKS_DATABASE_URL` | A `postgres://` URL. When set, the event log lives in that PostgreSQL database instead of `state.db`, so several machines share one factory's state. See [Where state lives](../guides/runs-and-logs.md#where-state-lives). |
+| `CRADLEWORKS_DATABASE_SCHEMA`, `CRADLEWORKS_TENANT` | Optional, with the database: the schema the tables go in (default `cradleworks`, created if missing), and whose work this factory sees (default `default`). Factories with different tenants on one database don't see each other's work. |
 | `GITHUB_TOKEN` | The GitHub token. If unset, the `gh` CLI login is used. |
 | `ANTHROPIC_API_KEY` | The API key for Claude Code. Keychain fallback: service `cradleworks-anthropic-api-key`. |
 | `CLAUDE_CODE_OAUTH_TOKEN` | The subscription token from `claude setup-token`. Keychain fallback: service `cradleworks-claude-oauth-token`. |

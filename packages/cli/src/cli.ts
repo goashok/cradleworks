@@ -7,9 +7,9 @@ import { dirname, join, resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
 import { ConfigError, DENIED_COMMANDS, KNOWN_CI_PATHS, KNOWN_SECRET_PATTERNS, loadProjectConfig } from '@cradleworks/config';
 import { Orchestrator, WorkItemRepository, type Evidence, type Progress, type Project, type Task, type TaskOutcome, type WorkItem, type WorkProgress } from '@cradleworks/core';
-import { AGENT_ROLES, type AgentRuntime, type CI, type Tracker } from '@cradleworks/interfaces';
+import { AGENT_ROLES, type AgentRuntime, type CI, type StateStore, type Tracker } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
-import { SqliteStateStore } from '@cradleworks/store-sqlite';
+import { openStore } from './store.ts';
 import { recoverOpenWork, runPass, type PassEvent } from '@cradleworks/runner';
 import { formatLog } from './log.ts';
 import { checkRequirements, checkSkills, skillsCommand, type RequirementRunner } from './skills.ts';
@@ -403,7 +403,7 @@ async function stats(args: string[], io: CliEnv): Promise<number> {
   if (positionals.length) throw new UsageError('stats takes no arguments: factory stats [--days <n>] [--project <name>] [--json]');
   const days = values.days ? Number(values.days) : 30;
   if (!Number.isFinite(days) || days <= 0) throw new UsageError('--days must be a positive number');
-  const store = new SqliteStateStore({ path: join(factoryHome(io), 'state.db') });
+  const store = await openStore(io.env, factoryHome(io));
   try {
     const repo = new WorkItemRepository(store);
     const items: StatsItem[] = [];
@@ -645,7 +645,7 @@ async function cancel(args: string[], io: CliEnv): Promise<number> {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { reason: { type: 'string' } } });
   const [id] = positionals;
   if (!id || positionals.length > 1) throw new UsageError('cancel takes one work item or task id');
-  const store = new SqliteStateStore({ path: join(factoryHome(io), 'state.db') });
+  const store = await openStore(io.env, factoryHome(io));
   try {
     const { wi } = await findTarget(new WorkItemRepository(store), store, id);
     const repo = new WorkItemRepository(store);
@@ -717,7 +717,7 @@ async function withTask(
 }
 
 /** A work item id, or a task id (found by scanning work items: fine at local scale). */
-async function findTarget(repository: WorkItemRepository, store: SqliteStateStore, id: string): Promise<{ wi: WorkItem; task?: Task }> {
+async function findTarget(repository: WorkItemRepository, store: StateStore, id: string): Promise<{ wi: WorkItem; task?: Task }> {
   if (id.startsWith('wi_')) {
     const wi = await repository.load(id);
     if (!wi) throw new UsageError(`no work item ${id}`);
@@ -744,7 +744,7 @@ async function log(args: string[], io: CliEnv): Promise<number> {
   });
   const [id] = positionals;
   if (!id || positionals.length > 1) throw new UsageError('log takes one run or work item id: factory log <id>');
-  const store = new SqliteStateStore({ path: join(factoryHome(io), 'state.db') });
+  const store = await openStore(io.env, factoryHome(io));
   try {
     let runIds = [id];
     if (!id.startsWith('run_')) {
@@ -783,7 +783,7 @@ async function consoleCommand(args: string[], io: CliEnv): Promise<number> {
     const code = await run(argv, { ...io, stdout: (s) => (output += s), stderr: (s) => (output += s) });
     return { code, output };
   };
-  const { server, url } = await startConsole({ home: factoryHome(io), port, runCommand }, describe);
+  const { server, url } = await startConsole({ home: factoryHome(io), port, runCommand, store: await openStore(io.env, factoryHome(io)) }, describe);
   io.stdout(`Console at ${url} (this machine only). Stop with Ctrl-C.\n`);
   await new Promise<void>((resolve) => {
     if (io.signal?.aborted) return resolve();
@@ -800,7 +800,7 @@ async function status(args: string[], io: CliEnv): Promise<number> {
   const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
   if (positionals.length > 1) throw new UsageError('status takes at most one work item id');
   const home = factoryHome(io);
-  const store = new SqliteStateStore({ path: join(home, 'state.db') });
+  const store = await openStore(io.env, home);
   try {
     const repo = new WorkItemRepository(store);
     const [id] = positionals;
@@ -1094,7 +1094,7 @@ interface ProjectContext {
   repoRoot: string;
   project: Project;
   orchestrator: Orchestrator;
-  store: SqliteStateStore;
+  store: StateStore;
   repository: WorkItemRepository;
   tracker?: Tracker;
   close(): Promise<void>;
@@ -1166,7 +1166,7 @@ async function openProject(io: CliEnv, dir: string = io.cwd): Promise<ProjectCon
   let ci: CI | undefined;
   if (ciEntry && ciEntry.scm.includes(config.adapters.scm)) ci = ciEntry.create();
   else if (config.adapters.ci !== 'none') io.stderr(`warning: CI "${config.adapters.ci}" does not build ${config.adapters.scm} repositories; Verify runs without CI\n`);
-  const store = new SqliteStateStore({ path: join(home, 'state.db') });
+  const store = await openStore(io.env, home);
   const orchestrator = new Orchestrator({
     store,
     sourceControl: scmEntry.create(),

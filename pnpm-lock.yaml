@@ -261,9 +261,19 @@ importers:
       '@cradleworks/runner':
         specifier: workspace:*
         version: link:../runner
+      '@cradleworks/store-postgres':
+        specifier: workspace:*
+        version: link:../store-postgres
       '@cradleworks/store-sqlite':
         specifier: workspace:*
         version: link:../store-sqlite
+    devDependencies:
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
 
   packages/config:
     dependencies:

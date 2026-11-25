@@ -5,7 +5,8 @@
   "description": "StateStore backed by PostgreSQL, for a hosted or self-managed factory",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
   },
   "dependencies": {
     "@cradleworks/interfaces": "workspace:*",

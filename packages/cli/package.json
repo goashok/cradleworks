@@ -21,6 +21,11 @@
     "@cradleworks/core": "workspace:*",
     "@cradleworks/interfaces": "workspace:*",
     "@cradleworks/runner": "workspace:*",
+    "@cradleworks/store-postgres": "workspace:*",
     "@cradleworks/store-sqlite": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "pg": "8.23.1"
   }
 }

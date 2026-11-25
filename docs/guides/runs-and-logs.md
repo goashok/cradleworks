@@ -135,3 +135,10 @@ check's output and every reviewer reason.
 
 Set `CRADLEWORKS_HOME` to keep separate histories, for example one for experiments and one for
 real work. Deleting the folder forgets every run, but not the branches and PRs already pushed.
+
+**In a shared database.** Set `CRADLEWORKS_DATABASE_URL` to a PostgreSQL URL and the event log
+goes there instead of `state.db`; every command, and `factory console`, reads and writes it. Use
+this when more than one machine runs the factory for the same work, for example runners that
+each take a pass and then go away. The tables are created on first use, events can't be changed
+or deleted there either, and `CRADLEWORKS_TENANT` keeps separate factories on one database apart.
+Keep the URL in your environment or a secret store; it contains the database password.

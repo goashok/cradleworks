@@ -35,7 +35,7 @@ task, or for the work item itself at the spec and plan gates and when it's block
 Run every command except `status`, `log` and `cancel` inside a repository that has
 `.factory/factory.yaml`, in its root or any folder below it. `status`, `log` and `cancel` work
 from anywhere. They read the state in
-`$CRADLEWORKS_HOME` (default `~/.cradleworks`).
+`$CRADLEWORKS_HOME` (default `~/.cradleworks`), or in the database `CRADLEWORKS_DATABASE_URL` names.
 
 Until Cradleworks is published as a package, run the CLI from a checkout:
 

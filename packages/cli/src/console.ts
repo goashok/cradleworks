@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { EventSpecStore, WorkItemRepository, type WorkItem } from '@cradleworks/core';
-import type { SpecDocument, StoredEvent } from '@cradleworks/interfaces';
+import type { SpecDocument, StateStore, StoredEvent } from '@cradleworks/interfaces';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { chip, costByRun, esc, headline, money, runBody, runsTable, specSection, steps, story, storySection, taskCard } from './console-view.ts';
 import { formatLog } from './log.ts';
@@ -23,6 +23,8 @@ export interface ConsoleOptions {
   /** Runs a CLI command and returns its exit code and output; the buttons use it. */
   runCommand: (argv: string[]) => Promise<{ code: number; output: string }>;
   token?: string;
+  /** The factory's state; SQLite in `home` when not given. The console closes it when it stops. */
+  store?: StateStore;
 }
 
 function page(title: string, body: string, refresh: boolean): string {
@@ -197,7 +199,7 @@ export function sameOrigin(req: Pick<IncomingMessage, 'headers'>, port: number):
 
 export function startConsole(options: ConsoleOptions, describeWorkItem: (wi: WorkItem) => string): Promise<{ server: Server; url: string; token: string }> {
   const token = options.token ?? randomBytes(24).toString('hex');
-  const store = new SqliteStateStore({ path: join(options.home, 'state.db') });
+  const store = options.store ?? new SqliteStateStore({ path: join(options.home, 'state.db') });
   const repo = new WorkItemRepository(store);
   const specs = new EventSpecStore(store);
   const items = async () => {
