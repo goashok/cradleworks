@@ -30,6 +30,7 @@ export function specifierPrompt(contextFiles: string[]): string {
     '- states a criterion about the whole repository (for example that nothing mentions an old version) without counting `.factory/`, where this spec is kept',
     '- keeps to what was asked; extra ideas go in "out of scope"',
     '- names every assumption you made where the request was silent',
+    '- says what each new field holds when it does not apply (no discount, nothing found, not set yet), following how the existing API shows similar fields: where amounts and counts are always plain numbers, one that does not apply is 0, not null. Say which existing fields you followed',
     '',
     `If the request cannot be specified without answers only the requester has, you may ask up to ${MAX_QUESTIONS} short questions instead, once. Ask only what changes the spec; prefer a stated assumption over a question.`,
     '',
