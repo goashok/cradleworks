@@ -2,7 +2,9 @@
 
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { tokenProviderFromEnv } from '@cradleworks/adapter-github';
 import { checkTasks } from './check.ts';
+import { githubPulls, githubRepoOf, mine } from './mine.ts';
 import { compare, formatComparison, formatSummary, summarize } from './report.ts';
 import { readResults, runEval, type FactoryCall } from './run.ts';
 import { loadSuite, selectTasks } from './suite.ts';
@@ -18,6 +20,7 @@ export interface EvalIo {
 
 const USAGE = `factory eval run <suite> [<task> | @<set> ...] [--variant <file>] [--label <name>] [--out <file.jsonl>] [--jobs <n>]
 factory eval check <suite> [<task> | @<set> ...]
+factory eval mine <repo> --out <suite> [--propose <n>] [--depth <merges>] [--tests <regex>] [--no-github] [--no-check]
 factory eval report <results.jsonl>...
 factory eval compare --base <results.jsonl>... --variant <results.jsonl>... [--json]
 `;
@@ -56,6 +59,38 @@ export async function evalCommand(args: string[], io: EvalIo, factory: FactoryCa
         const bad = lines.filter((l) => !l.ok);
         io.stdout(bad.length ? `${bad.length} case(s) wrong: fix those tasks before measuring with them.\n` : `Every task checks out (${lines.length} cases).\n`);
         return bad.length ? 1 : 0;
+      }
+      case 'mine': {
+        const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { out: { type: 'string' }, propose: { type: 'string' }, depth: { type: 'string' }, tests: { type: 'string' }, 'no-github': { type: 'boolean' }, 'no-check': { type: 'boolean' } } });
+        const [repoArg] = positionals;
+        if (!repoArg || !values.out) throw new Error('mine needs the project repository and --out <suite folder>');
+        const num = (v: string | undefined, what: string) => {
+          if (v === undefined) return undefined;
+          const n = Number(v);
+          if (!Number.isInteger(n) || n < 1) throw new Error(`--${what} must be a whole number of at least 1`);
+          return n;
+        };
+        const repo = /^[a-z+]+:\/\/|^git@/.test(repoArg) ? repoArg : resolve(io.cwd, repoArg);
+        const onGithub = values['no-github'] ? undefined : githubRepoOf(repo);
+        const propose = num(values.propose, 'propose');
+        const depth = num(values.depth, 'depth');
+        const r = await mine({
+          repo,
+          out: resolve(io.cwd, values.out),
+          ...(values.tests ? { tests: new RegExp(values.tests) } : {}),
+          ...(propose ? { propose } : {}),
+          ...(depth ? { depth } : {}),
+          ...(onGithub ? { pulls: githubPulls(onGithub, tokenProviderFromEnv(io.env)) } : {}),
+          ...(values['no-check'] ? { noCheck: true } : {}),
+          ...(runner ? { runner } : {}),
+          log: (l) => io.stdout(`${l}\n`),
+        });
+        const dropped = r.candidates.filter((c) => c.status === 'dropped').length;
+        const flagged = r.candidates.filter((c) => c.unmentioned.length).length;
+        io.stdout(`${r.candidates.length} candidate(s) from merges that changed tests (${r.withoutTests} changed none). Proposed ${r.proposed.length}, smoke ${r.smoke.length}, dropped ${dropped}, flagged for a person ${flagged}.\n`);
+        io.stdout(`Suite in ${r.suite}; read candidates.md there, then edit the sets in suite.yaml before the first run.\n`);
+        if (!onGithub && !values['no-github']) io.stdout('The repository is not on GitHub, so requests come from commit messages.\n');
+        return 0;
       }
       case 'report': {
         const { positionals } = parseArgs({ args: rest, allowPositionals: true, options: {} });

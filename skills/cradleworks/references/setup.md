@@ -81,7 +81,9 @@ These are skills the factory gives its own agents, not this skill.
 
 ## Measuring a change to the factory
 
-1. `factory docs measuring "1. Write a suite"`. The suite lives outside their repository. Check:
+1. `factory docs measuring "1. Write a suite"`. Start with `factory eval mine <repo> --out <suite>`
+   (no agents; checking runs the project's tests), then read `candidates.md` with them. The suite
+   lives outside their repository. Check:
    `factory eval check <suite>` (no agents, no cost); every case must say `ok`.
 2. `factory docs measuring "2. Run it"`. One task first. Costs money: say so.
 3. Run the factory as configured at least twice, then the variant

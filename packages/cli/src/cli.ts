@@ -151,6 +151,9 @@ const USAGE = `Usage:
                                     Measure the factory on a suite of tasks with hidden tests, as
                                     configured or with a config variant, and compare the two
                                     against the noise band. See docs/guides/measuring.md
+  factory eval mine <repo> --out <suite> [--propose <n>] [--no-check] ...
+                                    Build a suite from the project's merged history: each merge
+                                    that changed tests becomes a task, checked and ranked
   factory stats [--days <n>] [--project <name>] [--json]
                                     How the factory did on real work: gates, send-backs, rework,
                                     agent checks, cost and time per merged change

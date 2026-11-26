@@ -18,6 +18,7 @@ factory review <change.patch> --title <text> [--task <file.md>] [--base <branch>
 factory drill [--check <name>] [--base <branch>] [--json]
 factory eval run <suite> [<task> | @<set> ...] [--variant <file>] [--label <name>] [--out <file>] [--jobs <n>]
 factory eval check <suite> [<task> | @<set> ...]
+factory eval mine <repo> --out <suite> [--propose <n>] [--depth <merges>] [--tests <regex>] [--no-github] [--no-check]
 factory eval report <results.jsonl>...
 factory eval compare --base <results.jsonl>... --variant <results.jsonl>... [--json]
 factory stats [--days <n>] [--project <name>] [--json]
@@ -174,6 +175,7 @@ Measures the factory on a suite of tasks with hidden tests. See
 | --- | --- |
 | `run <suite> [<task> \| @<set> ...]` | For each task (all by default), runs `factory submit` on a scratch copy of the project at the task's base commit, with local git, no CI or tracker, and the change gate decided by the reviewer and merged. Then grades the merged result with the hidden tests, on this machine. Appends one JSON line per task to `--out` (default `<suite>/results/<date>-<label>.jsonl`) and skips tasks already there. `--variant <file>` applies a config variant first; `--label` names the run (default the variant's name, or `base`); `--jobs` runs tasks in parallel. Exit 0, or 3 when a task could not run |
 | `check <suite> [<task> ...]` | Checks the tasks: hidden tests fail at the base commit (or pass with `expect_base: pass`), pass with `solution.patch`, fail with each `wrong/*.patch`. Exit 0 when every case is as expected, 1 otherwise |
+| `mine <repo> --out <suite>` | Builds a new suite from the project's merged history: each merge to the default branch that changed tests becomes a task (base: the commit before it; request: the issue its pull request closes or is part of, else the pull request, else the commit message; hidden tests: the test files it changed; `solution.patch`: the rest, outside `.factory/`). Ranks the tasks across areas of the code, newest first, near-duplicates last, and checks them in that order until `--propose` (default 20) pass; writes the `proposed` and `smoke` sets, `settings_from` (the default branch's head) and `candidates.md`. `--depth` merges back (default 200); `--tests` which files are tests (a regular expression on the path); `--no-github` takes requests from commit messages only; `--no-check` skips checking. The suite folder must be new and outside the repository. Exit 0 |
 | `report <results.jsonl>...` | Each file's score, cost and time, and each task's outcome |
 | `compare --base <file>... --variant <file>...` | Scores over the tasks every file has, the noise band (the range of the base scores; needs two or more), and a verdict: better or worse only when every variant run lands outside the band |
 

@@ -15,6 +15,50 @@ cases](verify-and-approve.md#drill-your-checks).
 
 ## 1. Write a suite
 
+**Start from your own history.** `factory eval mine` builds a suite from the changes your team
+already merged, so you don't write tasks by hand:
+
+```text
+factory eval mine ../my-service --out ../my-service-evals
+```
+
+Each merge to the default branch that changed tests becomes a task:
+
+| Part of the task | Taken from the merge |
+| --- | --- |
+| Base commit | the default branch just before it |
+| Request (`issue.md`) | the issue its pull request closes or is part of, else the pull request's title and description, else the commit message |
+| Hidden tests | the test files it added or changed |
+| Reference solution | the rest of its diff, outside `.factory/` |
+
+The factory isn't graded on reproducing your change: it writes its own, and passes when your
+tests pass on it. A factory pull request's own sections (what the agent did) and its approved spec
+are never part of the request: the factory writes its own spec.
+
+`mine` then ranks the tasks: spread over the areas of your code, newest first, and with no more
+than two near-identical changes (same kind, size and area) ahead of the rest. It checks them in
+that order (see below) and proposes the first 20 that pass (`--propose` changes the number), and
+picks the 5 smallest as a `smoke` set. Both are sets in `suite.yaml`. `candidates.md` lists every
+task with what it was ranked on: kind, size, area, number of hidden tests, date, review rounds,
+and where its request came from. It also says why a task was dropped or held back:
+
+- **Dropped by the check:** the tests already pass before the change, fail with it, or the old
+  code no longer builds.
+- **Flagged for you:** the tests use a name the change added (a function, a route) that the
+  request never mentions, so the factory would have to guess it. Add the detail to `issue.md` and
+  the task to `proposed`, or leave it out.
+
+Read the proposal before the first run, and change it as you like: the sets are yours. **Once
+you start measuring, keep the tasks fixed.** Choosing tasks after seeing how a change did biases
+the result, and a changed suite needs its own noise band (step 4).
+
+Requests come from GitHub when the repository is there, with the token the factory uses
+(`GITHUB_TOKEN`, `gh auth login`, or the factory's GitHub App); `--no-github` uses commit
+messages only. Tests are found by common file layouts (`test/`, `*.test.ts`, `src/test/`,
+`*Test.java`, `test_*.py`, ...); `--tests '<regex>'` sets your own.
+
+**Or write tasks by hand,** in the same format, for things your history doesn't cover.
+
 A suite is a folder **outside your project's repository**, for example a private repository of
 its own. The factory's agents must never be able to read the hidden tests: if they could, a pass
 would mean nothing. Only a task's issue text is ever handed to the factory.
