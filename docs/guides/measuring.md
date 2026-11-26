@@ -44,7 +44,14 @@ grade:
   reports: [target/surefire-reports]   # optional: JUnit XML folders, from the project root
   hidden: '\.hidden\.'       # optional: which test cases are hidden (default: "hidden" in the path)
   timeout_minutes: 30
+settings_from: 9a41b07       # optional: see below
 ```
+
+**`settings_from`** names a commit whose `.factory/` folder (rules, prompts, skills,
+`factory.yaml`) is laid over every task's base commit. Use it when tasks come from your project's
+past: an old base commit has old settings, or none, and you want to measure the factory as you run
+it today. The base's own `.factory/specs/` stays as it was, since specs written later include the
+one for the very change a task asks for; the commit's history never reaches the factory.
 
 `task.yaml`:
 

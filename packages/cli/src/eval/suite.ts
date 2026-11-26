@@ -3,7 +3,9 @@
 // factory's agents must never be able to read the hidden tests), for example in a private repo:
 //
 //   <suite>/
-//     suite.yaml                   repo, sets, how to grade
+//     suite.yaml                   repo, sets, how to grade, and optionally settings_from: a
+//                                  commit whose .factory/ is laid over every task's base (for
+//                                  tasks taken from before the project had one)
 //     tasks/<id>/
 //       task.yaml                  base_commit, and optional title, type, size, grade overrides
 //       issue.md                   the only thing the factory sees: "# Title", then the request
@@ -34,6 +36,8 @@ export interface Suite {
   sets: Record<string, string[]>;
   grade: GradeSpec;
   tasks: string[];
+  /** A commit of the repository whose `.factory/` is laid over each task's base, its specs aside. */
+  settingsFrom?: string;
 }
 
 export interface EvalTask {
@@ -86,7 +90,9 @@ export function loadSuite(dir: string): Suite {
     for (const id of ids) if (!tasks.includes(String(id))) throw new Error(`suite.yaml: sets.${name} names ${String(id)}, which is not in tasks/`);
     sets[name] = ids.map(String);
   }
-  return { dir: root, repo, sets, grade: gradeSpec(raw.grade, undefined, 'suite.yaml'), tasks };
+  const settingsFrom = str(raw.settings_from, 'suite.yaml: settings_from');
+  if (settingsFrom !== undefined && !/^[0-9a-f]{7,40}$/.test(settingsFrom)) throw new Error('suite.yaml: settings_from must be a commit id');
+  return { dir: root, repo, sets, grade: gradeSpec(raw.grade, undefined, 'suite.yaml'), tasks, ...(settingsFrom ? { settingsFrom } : {}) };
 }
 
 export function loadTask(suite: Suite, id: string): EvalTask {

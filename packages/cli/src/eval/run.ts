@@ -18,7 +18,7 @@ import { WorkItemRepository, type ProjectConfig } from '@cradleworks/core';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { checkoutAt, dockerRunner, gradeCheckout, hostRunner, type GradeResult, type Runner } from './grade.ts';
 import { loadTask, type EvalTask, type Suite } from './suite.ts';
-import { applyVariant, type Variant } from './variant.ts';
+import { applyVariant, overlaySettings, type Variant } from './variant.ts';
 
 /** Runs a `factory` command in-process. */
 export type FactoryCall = (args: string[], cwd: string, env: Record<string, string | undefined>) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -111,9 +111,14 @@ export function scratchRepo(suite: Suite, task: EvalTask, variant: Variant | und
   git(undefined, 'init', '--quiet', '--bare', remote);
   git(source, 'push', '--quiet', remote, `${task.baseCommit}:refs/heads/main`);
   git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main');
-  rmSync(source, { recursive: true, force: true });
   git(undefined, 'clone', '--quiet', remote, checkout);
   git(checkout, 'checkout', '-q', '-B', 'main', task.baseCommit);
+  try {
+    // Today's settings over an older base: read from the full copy, which then goes.
+    if (suite.settingsFrom) overlaySettings(source, suite.settingsFrom, checkout);
+  } finally {
+    rmSync(source, { recursive: true, force: true });
+  }
   applyVariant(checkout, variant);
   git(checkout, 'add', '-A');
   git(checkout, '-c', 'user.name=factory eval', '-c', 'user.email=eval@cradleworks.invalid', 'commit', '--quiet', '--allow-empty', '-m', `Eval settings${variant ? ` and variant ${variant.name}` : ''}`);

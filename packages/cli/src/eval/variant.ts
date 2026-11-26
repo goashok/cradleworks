@@ -16,8 +16,9 @@
 // git, no CI or tracker, the change gate decided by the reviewer and merged), so gates are not
 // something a variant can change.
 
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { overlay, parseYaml, stringifyYaml } from '@cradleworks/config';
 
@@ -53,6 +54,43 @@ export function loadVariant(file: string): Variant {
 }
 
 const FACTORY_YAML = '.factory/factory.yaml';
+
+/**
+ * Lays the repository's `.factory/` as of commit `from` over a checkout of an older commit, so a
+ * task taken from before the project had today's settings runs with them. The checkout's own
+ * `.factory/specs/` stays as it was: specs written later would include the one for the very issue
+ * a task asks for.
+ */
+export function overlaySettings(gitDir: string, from: string, dest: string): void {
+  const git = (args: string[]) => execFileSync('git', ['--git-dir', gitDir, ...args], { maxBuffer: 256 * 1024 * 1024 });
+  try {
+    git(['cat-file', '-e', `${from}^{commit}`]);
+  } catch {
+    throw new Error(`settings_from ${from} is not in the repository`);
+  }
+  const entries = git(['ls-tree', '-r', '-z', from, '--', '.factory'])
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+    .map((line) => {
+      const [meta, path] = line.split('\t') as [string, string];
+      return { mode: meta.split(' ')[0]!, path };
+    })
+    .filter((e) => !e.path.startsWith('.factory/specs/'));
+  if (!entries.some((e) => e.path === FACTORY_YAML)) throw new Error(`settings_from ${from} has no ${FACTORY_YAML}`);
+  const root = join(dest, '.factory');
+  if (existsSync(root)) for (const name of readdirSync(root)) if (name !== 'specs') rmSync(join(root, name), { recursive: true, force: true });
+  for (const e of entries) {
+    const target = join(dest, e.path);
+    mkdirSync(dirname(target), { recursive: true });
+    const body = git(['cat-file', 'blob', `${from}:${e.path}`]);
+    if (e.mode === '120000') symlinkSync(body.toString('utf8'), target);
+    else {
+      writeFileSync(target, body);
+      if (e.mode === '100755') chmodSync(target, 0o755);
+    }
+  }
+}
 
 /** What every eval run uses, whatever the variant: a local copy, merged by the reviewer's verdict. */
 export const EVAL_SETTINGS = {

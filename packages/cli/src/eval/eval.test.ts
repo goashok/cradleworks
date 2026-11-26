@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBareRepo, git, gitStatus, ScriptedAgentRuntime } from '@cradleworks/contracts/fakes';
@@ -126,6 +126,28 @@ describe('factory eval', () => {
     const log = (await git(['-C', checkout, 'log', '--all', '--format=%s'])).stdout.trim().split('\n');
     expect(log).not.toContain('The answer');
     expect((await git(['-C', checkout, 'rev-parse', 'main~1'])).stdout.trim()).toBe(base);
+  });
+
+  it('lays the settings of a later commit over an old base, without its specs or its history', async () => {
+    const work = join(root, 'later');
+    await git(['clone', '--quiet', join(root, 'project.git'), work]);
+    writeFileSync(join(work, '.factory', 'rules', 'style.md'), 'Today\'s rule.\n');
+    mkdirSync(join(work, '.factory', 'specs'), { recursive: true });
+    writeFileSync(join(work, '.factory', 'specs', 'issue-1-greet.md'), 'The answer.\n');
+    writeFileSync(join(work, 'greeting.txt'), 'hello\n');
+    await git(['-C', work, 'add', '-A']);
+    await git(['-C', work, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-m', 'Later']);
+    const later = (await git(['-C', work, 'rev-parse', 'HEAD'])).stdout.trim();
+    await git(['-C', work, 'push', '--quiet', 'origin', 'HEAD:main']);
+    writeFileSync(join(suite, 'suite.yaml'), `repo: ../project.git\nsettings_from: ${later}\ngrade:\n  command: sh hidden-check.sh\n`);
+
+    const loaded = loadSuite(suite);
+    const { checkout } = scratchRepo(loaded, loadTask(loaded, 'greet'), undefined, join(root, 'scratch'));
+    expect(readFileSync(join(checkout, '.factory', 'rules', 'style.md'), 'utf8')).toBe("Today's rule.\n");
+    expect(existsSync(join(checkout, '.factory', 'specs', 'issue-1-greet.md'))).toBe(false);
+    expect(existsSync(join(checkout, 'greeting.txt'))).toBe(false);
+    expect(await gitStatus(['-C', checkout, 'cat-file', '-e', `${later}^{commit}`])).not.toBe(0);
+    expect(existsSync(join(root, 'scratch', 'source.git'))).toBe(false);
   });
 
   it('reports what the factory did on real work', async () => {

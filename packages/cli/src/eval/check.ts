@@ -9,6 +9,7 @@ import { loadProjectConfig } from '@cradleworks/config';
 import { applyPatch, checkoutAt, gradeCheckout, type Runner } from './grade.ts';
 import { defaultCommand, runnerFor } from './run.ts';
 import { loadTask, type Suite } from './suite.ts';
+import { overlaySettings } from './variant.ts';
 
 export interface CheckLine {
   task: string;
@@ -40,6 +41,7 @@ export async function checkTasks(suite: Suite, ids: string[], workDir: string, l
       try {
         mkdirSync(join(workDir, id), { recursive: true });
         checkoutAt(suite.repo, task.baseCommit, dir);
+        if (suite.settingsFrom) overlaySettings(join(dir, '.git'), suite.settingsFrom, dir);
         if (c.patch) applyPatch(dir, c.patch);
         const config = loadProjectConfig(dir);
         const r = await gradeCheckout({
