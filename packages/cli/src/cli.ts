@@ -670,7 +670,7 @@ async function cancel(args: string[], io: CliEnv): Promise<number> {
     const { wi } = await findTarget(new WorkItemRepository(store), store, id);
     const repo = new WorkItemRepository(store);
     const latest = (await repo.load(wi.id))!;
-    await repo.append(latest, [{ type: 'work_item_cancelled', at: new Date().toISOString(), reason: values.reason?.trim() || 'cancelled from the CLI' }]);
+    await repo.append(latest, [{ type: 'work_item_cancelled', at: new Date().toISOString(), reason: values.reason?.trim() || 'cancelled by a person' }]);
     io.stdout(`Cancelled ${wi.id}. Its pull requests stay open; close them on the forge if you want.\n`);
     return 0;
   } finally {

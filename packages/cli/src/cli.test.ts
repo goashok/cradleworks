@@ -340,7 +340,7 @@ describe('factory watch', () => {
 
     // Someone acting through a hosted console is named by CRADLEWORKS_ACTOR, not the machine's git user.
     expect(await factory(['approve', wiId], checkout, reg, { CRADLEWORKS_ACTOR: 'Jordan Lee' })).toMatchObject({ code: 0, stdout: expect.stringContaining('Approved the spec v1 of') });
-    expect(tracker.factoryComments(issue).at(-1)).toContain('**Spec approved** by Jordan Lee');
+    expect(tracker.factoryComments(issue).at(-1)).toContain('**Spec approved** by Jordan Lee.');
 
     const second = await factory(['watch', '--once'], checkout, reg);
     expect(second.stdout).toContain('#1 plan_check approved (ai)');

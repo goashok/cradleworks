@@ -938,12 +938,12 @@ export class Orchestrator {
     onProgress({ kind: 'planned', tasks: after.proposedTasks.map((t) => ({ id: t.id, title: t.title, dependsOn: t.dependsOn })) });
   }
 
-  /** A person decides the spec gate or the plan check from the CLI. */
+  /** A person decides the spec gate or the plan check (with the CLI, or a console that runs it). */
   async decideWorkItemGate(workItemId: string, input: { by: string; verdict: 'approved' | 'rejected'; reason?: string }): Promise<GateName> {
     const wi = await this.#mustLoad(workItemId);
-    const reason = input.reason?.trim() || (input.verdict === 'approved' ? 'approved from the CLI' : '');
+    const reason = input.reason?.trim() || (input.verdict === 'approved' ? 'approved by a person' : '');
     if (input.verdict === 'rejected' && !reason) throw new Error('a rejection needs a reason');
-    const said = `**${wi.state === 'awaiting_spec_approval' ? 'Spec' : 'Plan'} ${input.verdict}** by ${input.by} from the CLI${input.verdict === 'rejected' ? `: ${reason}` : '.'}`;
+    const said = `**${wi.state === 'awaiting_spec_approval' ? 'Spec' : 'Plan'} ${input.verdict}** by ${input.by}${input.verdict === 'rejected' ? `: ${reason}` : '.'}`;
     if (wi.state === 'awaiting_spec_approval') {
       await this.#decideSpec(wi, { mode: 'human', verdict: input.verdict, decidedBy: input.by, reason });
       if (fromTracker(wi)) await this.#say(wi.source, said);
@@ -1574,7 +1574,7 @@ export class Orchestrator {
     const project = projectFor(given, task);
     if (task.state !== 'ready') throw new Error(`task ${taskId} is ${task.state}; only a ready task can be approved`);
     if (!task.changeApproved) {
-      await this.#decideChange(wi, task, { mode: 'human', verdict: 'approved', decidedBy: input.by, reason: input.reason?.trim() || 'approved from the CLI' });
+      await this.#decideChange(wi, task, { mode: 'human', verdict: 'approved', decidedBy: input.by, reason: input.reason?.trim() || 'approved by a person' });
     }
     if (input.merge || autoMerges(project, task)) return { merged: await this.mergeTask(given, workItemId, taskId) };
     return {};
@@ -1602,7 +1602,7 @@ export class Orchestrator {
 
   async cancelWorkItem(workItemId: string, reason: string): Promise<void> {
     const wi = await this.#mustLoad(workItemId);
-    await this.#emit(wi.id, [{ type: 'work_item_cancelled', at: this.#clock(), reason: reason.trim() || 'cancelled from the CLI' }]);
+    await this.#emit(wi.id, [{ type: 'work_item_cancelled', at: this.#clock(), reason: reason.trim() || 'cancelled by a person' }]);
     await this.#showEnd(wi.id);
   }
 
