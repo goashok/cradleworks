@@ -1,12 +1,16 @@
 // Runs the factory on eval tasks and grades what it merged.
 //
-// Each task gets a scratch copy of the project's repository: a bare clone whose `main` is the
-// task's base commit with the variant and the eval's settings committed on top. The factory
-// works on that copy through `factory submit`, with its own state folder, and never sees the
-// suite: only the task's issue text is handed over. After it finishes, the merged `main` (or,
-// when nothing merged, the task's branch, for information) is checked out on this machine, the
-// hidden tests are copied in and the grading command runs. A task passes only when the factory
-// merged its change and the hidden tests pass on it.
+// A task runs in two halves, which can run on different machines:
+//
+// - The attempt (`attemptTask`) needs no suite: a scratch copy of the project's repository whose
+//   `main` is the task's base commit with the variant and the eval's settings committed on top,
+//   and the task's issue text. The factory works on that copy through `factory submit`, with its
+//   own state folder. Its result is a patch: what it merged (or, when nothing merged, its task's
+//   branch, for information), outside `.factory/`.
+// - The grade (`gradeAttempt`) checks out the base commit again, with the project's settings and
+//   not the variant's, so every variant is graded alike; applies the patch; copies the hidden
+//   tests in and runs the grading command. A task passes only when the factory merged its change
+//   and the hidden tests pass on it.
 
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -44,6 +48,27 @@ export interface EvalResult {
   passed: boolean;
   error?: string;
 }
+
+/** What the factory did on a task, without the grade: the attempt half of a run. */
+export interface AttemptResult {
+  /** The variant's name and hash, or null for the factory as configured. */
+  variant: { name: string; hash: string } | null;
+  factoryCommit?: string;
+  startedAt: string;
+  durationSeconds: number;
+  workItemId?: string;
+  factoryState: string;
+  merged: boolean;
+  reworkLoops: number;
+  costUsd: number;
+  /** What the patch holds: the merged main, the unmerged branch, or nothing. */
+  graded: 'merged' | 'branch' | 'none';
+  error?: string;
+}
+
+/** The attempt's result file and its patch, in an attempt's folder. */
+export const ATTEMPT_JSON = 'attempt.json';
+export const ATTEMPT_PATCH = 'attempt.patch';
 
 export interface EvalOptions {
   suite: Suite;
@@ -91,12 +116,12 @@ export function runnerFor(config: ProjectConfig, override?: Runner): Runner {
 }
 
 /**
- * A scratch bare copy of the suite's repository whose main is the task's base commit plus the
- * variant. It holds only the base commit's own history: nothing after it, no other branch and no
+ * A scratch bare copy of the project's repository whose main is the task's base commit plus the
+ * variant; `start` is that commit, the one the factory's work is measured from. It holds only the base commit's own history: nothing after it, no other branch and no
  * tag, since the agents can read the checkout's git history, and a task taken from the project's
  * past has its answer in a later commit.
  */
-export function scratchRepo(suite: Suite, task: EvalTask, variant: Variant | undefined, dir: string): { remote: string; checkout: string } {
+export function scratchRepo(suite: Pick<Suite, 'repo' | 'settingsFrom'>, task: Pick<EvalTask, 'baseCommit'>, variant: Variant | undefined, dir: string): { remote: string; checkout: string; start: string } {
   const remote = join(dir, 'remote.git');
   const checkout = join(dir, 'checkout');
   const source = join(dir, 'source.git');
@@ -123,45 +148,46 @@ export function scratchRepo(suite: Suite, task: EvalTask, variant: Variant | und
   git(checkout, 'add', '-A');
   git(checkout, '-c', 'user.name=factory eval', '-c', 'user.email=eval@cradleworks.invalid', 'commit', '--quiet', '--allow-empty', '-m', `Eval settings${variant ? ` and variant ${variant.name}` : ''}`);
   git(checkout, 'push', '--quiet', '--force', 'origin', 'main');
-  return { remote, checkout };
+  return { remote, checkout, start: git(checkout, 'rev-parse', 'HEAD') };
 }
 
-async function runOne(o: EvalOptions, id: string, commit: string | undefined): Promise<EvalResult> {
-  const task = loadTask(o.suite, id);
+export interface AttemptInput {
+  /** The project's repository, and optionally the commit whose `.factory/` is laid over the base. */
+  source: Pick<Suite, 'repo' | 'settingsFrom'>;
+  baseCommit: string;
+  /** The issue text: the only thing of the task the factory is given. */
+  issue: string;
+  variant?: Variant;
+  /** A new folder for the attempt; `attempt.json` and `attempt.patch` are written in it. */
+  dir: string;
+  factory: FactoryCall;
+  env: Record<string, string | undefined>;
+  commit?: string;
+}
+
+/** Runs the factory on a task: the half of a run that never sees the hidden tests. */
+export async function attemptTask(a: AttemptInput): Promise<AttemptResult> {
   const started = Date.now();
-  const dir = join(dirname(resolve(o.out)), `${o.label}.d`, id);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  const base: EvalResult = {
-    task: id,
-    label: o.label,
-    variant: o.variant ? { name: o.variant.name, hash: o.variant.hash } : null,
-    ...(commit ? { factoryCommit: commit } : {}),
-    startedAt: new Date(started).toISOString(),
-    durationSeconds: 0,
-    factoryState: 'not run',
-    merged: false,
-    reworkLoops: 0,
-    costUsd: 0,
-    graded: 'none',
-    passed: false,
+  rmSync(a.dir, { recursive: true, force: true });
+  mkdirSync(a.dir, { recursive: true });
+  const base: AttemptResult = { variant: a.variant ? { name: a.variant.name, hash: a.variant.hash } : null, ...(a.commit ? { factoryCommit: a.commit } : {}), startedAt: new Date(started).toISOString(), durationSeconds: 0, factoryState: 'not run', merged: false, reworkLoops: 0, costUsd: 0, graded: 'none' };
+  const done = (r: Partial<AttemptResult>, patch = ''): AttemptResult => {
+    const result = { ...base, ...r, durationSeconds: Math.round((Date.now() - started) / 1000) };
+    writeFileSync(join(a.dir, ATTEMPT_PATCH), patch);
+    writeFileSync(join(a.dir, ATTEMPT_JSON), `${JSON.stringify(result, null, 2)}\n`);
+    return result;
   };
-  const done = (r: Partial<EvalResult>): EvalResult => ({ ...base, ...r, durationSeconds: Math.round((Date.now() - started) / 1000) });
-  let scratch: { remote: string; checkout: string };
-  let config: ProjectConfig;
+  let scratch: { remote: string; checkout: string; start: string };
   try {
-    scratch = scratchRepo(o.suite, task, o.variant, dir);
-    config = loadProjectConfig(scratch.checkout);
+    scratch = scratchRepo(a.source, { baseCommit: a.baseCommit }, a.variant, join(a.dir, 'scratch'));
   } catch (error) {
     return done({ error: `setup: ${(error as Error).message}` });
   }
-
-  // The factory gets the issue text and the scratch copy, nothing else from the suite.
-  const issueFile = join(dir, 'issue.md');
-  writeFileSync(issueFile, task.issue);
-  const home = join(dir, 'home');
-  const ran = await o.factory(['submit', issueFile], scratch.checkout, { ...o.env, CRADLEWORKS_HOME: home });
-  writeFileSync(join(dir, 'factory.log'), `${ran.stdout}\n${ran.stderr}`);
+  const issueFile = join(a.dir, 'issue.md');
+  writeFileSync(issueFile, a.issue);
+  const home = join(a.dir, 'home');
+  const ran = await a.factory(['submit', issueFile], scratch.checkout, { ...a.env, CRADLEWORKS_HOME: home });
+  writeFileSync(join(a.dir, 'factory.log'), `${ran.stdout}\n${ran.stderr}`);
   const wiId = /as (wi_\S+)/.exec(ran.stdout)?.[1];
   if (!wiId) return done({ error: `the factory did not take the task: ${(ran.stderr || ran.stdout).trim().split('\n').at(-1) ?? ''}` });
 
@@ -176,7 +202,7 @@ async function runOne(o: EvalOptions, id: string, commit: string | undefined): P
     if (wi) {
       state = wi.state;
       merged = wi.state === 'merged';
-      reworkLoops = wi.tasks.reduce((a, t) => a + t.reworkLoops, 0);
+      reworkLoops = wi.tasks.reduce((n, t) => n + t.reworkLoops, 0);
       costUsd = wi.spentUsd;
       branch = wi.tasks[0]?.branch;
     }
@@ -185,23 +211,68 @@ async function runOne(o: EvalOptions, id: string, commit: string | undefined): P
   }
   const facts = { workItemId: wiId, factoryState: state, merged, reworkLoops, costUsd };
   const ref = merged ? 'main' : branch;
-  if (!ref) return done({ ...facts });
+  if (!ref) return done(facts);
   try {
-    const gradeDir = join(dir, 'grade');
-    checkoutAt(scratch.remote, ref, gradeDir);
-    const result = await gradeCheckout({
+    // The factory's own work, outside .factory/: its specs and notes don't change what is graded.
+    const patch = execFileSync('git', ['--git-dir', scratch.remote, 'diff', '--binary', scratch.start, ref, '--', '.', ':(exclude).factory'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+    return done({ ...facts, graded: merged ? 'merged' : 'branch' }, patch);
+  } catch (error) {
+    return done({ ...facts, error: `reading the result: ${(error as Error).message}` });
+  }
+}
+
+/**
+ * Grades an attempt: the base commit with the project's settings, the attempt's patch committed
+ * on top, then the hidden tests. Returns the whole result for the task.
+ */
+export async function gradeAttempt(o: { suite: Suite; task: EvalTask; attempt: AttemptResult; patch: string; dir: string; label: string; runner?: Runner; cacheDir: string }): Promise<EvalResult> {
+  const { attempt, task } = o;
+  const result: EvalResult = { task: task.id, label: o.label, ...attempt, passed: false };
+  if (attempt.error || attempt.graded === 'none') return result;
+  const started = Date.now();
+  const took = () => attempt.durationSeconds + Math.round((Date.now() - started) / 1000);
+  try {
+    const dir = join(o.dir, 'grade');
+    checkoutAt(o.suite.repo, task.baseCommit, dir);
+    if (o.suite.settingsFrom) overlaySettings(join(dir, '.git'), o.suite.settingsFrom, dir);
+    const config = loadProjectConfig(dir);
+    if (o.patch.trim()) {
+      const file = join(o.dir, 'graded.patch');
+      writeFileSync(file, o.patch);
+      git(dir, 'apply', '--binary', '--whitespace=nowarn', file);
+    }
+    // Committed, so the grade can tell which hidden test files the change itself touched.
+    git(dir, 'add', '-A');
+    git(dir, '-c', 'user.name=factory eval', '-c', 'user.email=eval@cradleworks.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'The factory\'s change');
+    const graded = await gradeCheckout({
       task,
-      dir: gradeDir,
+      dir,
       command: task.grade.command ?? defaultCommand(config),
       image: task.grade.image ?? config.stack.image,
       runner: runnerFor(config, o.runner),
-      cacheDir: join(dirname(resolve(o.out)), '.grade-cache'),
+      cacheDir: o.cacheDir,
     });
-    const { log: _log, ...grade } = result;
-    return done({ ...facts, graded: merged ? 'merged' : 'branch', grade, passed: merged && result.verdict === 'pass' });
+    const { log: _log, ...grade } = graded;
+    return { ...result, durationSeconds: took(), grade, passed: attempt.merged && graded.verdict === 'pass' };
   } catch (error) {
-    return done({ ...facts, error: `grading: ${(error as Error).message}` });
+    return { ...result, durationSeconds: took(), error: `grading: ${(error as Error).message.split('\n')[0]}` };
   }
+}
+
+async function runOne(o: EvalOptions, id: string, commit: string | undefined): Promise<EvalResult> {
+  const task = loadTask(o.suite, id);
+  const dir = join(dirname(resolve(o.out)), `${o.label}.d`, id);
+  const attempt = await attemptTask({ source: o.suite, baseCommit: task.baseCommit, issue: task.issue, ...(o.variant ? { variant: o.variant } : {}), dir, factory: o.factory, env: o.env, ...(commit ? { commit } : {}) });
+  return gradeAttempt({
+    suite: o.suite,
+    task,
+    attempt,
+    patch: readFileSync(join(dir, ATTEMPT_PATCH), 'utf8'),
+    dir,
+    label: o.label,
+    ...(o.runner ? { runner: o.runner } : {}),
+    cacheDir: join(dirname(resolve(o.out)), '.grade-cache'),
+  });
 }
 
 /** Runs the tasks, `jobs` at a time, appending each result to `out` as it finishes. */

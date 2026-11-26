@@ -147,7 +147,7 @@ const USAGE = `Usage:
                                     Hand the reviewer and each agent check the known-bad and
                                     known-good changes in .factory/drill/. Exits 0 when every
                                     one was judged right, 1 when one was missed, 3 inconclusive
-  factory eval run|check|report|compare ...
+  factory eval run|check|attempt|grade|report|compare ...
                                     Measure the factory on a suite of tasks with hidden tests, as
                                     configured or with a config variant, and compare the two
                                     against the noise band. See docs/guides/measuring.md

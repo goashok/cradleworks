@@ -6,7 +6,9 @@ import { tokenProviderFromEnv } from '@cradleworks/adapter-github';
 import { checkTasks } from './check.ts';
 import { githubPulls, githubRepoOf, mine } from './mine.ts';
 import { compare, formatComparison, formatSummary, summarize } from './report.ts';
-import { readResults, runEval, type FactoryCall } from './run.ts';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { ATTEMPT_JSON, ATTEMPT_PATCH, attemptTask, factoryCommit, gradeAttempt, readResults, runEval, type AttemptResult, type FactoryCall } from './run.ts';
+import { loadTask } from './suite.ts';
 import { loadSuite, selectTasks } from './suite.ts';
 import { loadVariant } from './variant.ts';
 import type { Runner } from './grade.ts';
@@ -20,6 +22,8 @@ export interface EvalIo {
 
 const USAGE = `factory eval run <suite> [<task> | @<set> ...] [--variant <file>] [--label <name>] [--out <file.jsonl>] [--jobs <n>]
 factory eval check <suite> [<task> | @<set> ...]
+factory eval attempt --repo <repo> --base <commit> --issue <issue.md> --out <dir> [--settings-from <commit>] [--variant <file>]
+factory eval grade <suite> <task> --attempt <dir> [--label <name>] [--out <file.jsonl>] [--json]
 factory eval mine <repo> --out <suite> [--propose <n>] [--depth <merges>] [--tests <regex>] [--no-github] [--no-check]
 factory eval report <results.jsonl>...
 factory eval compare --base <results.jsonl>... --variant <results.jsonl>... [--json]
@@ -59,6 +63,40 @@ export async function evalCommand(args: string[], io: EvalIo, factory: FactoryCa
         const bad = lines.filter((l) => !l.ok);
         io.stdout(bad.length ? `${bad.length} case(s) wrong: fix those tasks before measuring with them.\n` : `Every task checks out (${lines.length} cases).\n`);
         return bad.length ? 1 : 0;
+      }
+      case 'attempt': {
+        const { values } = parseArgs({ args: rest, options: { repo: { type: 'string' }, base: { type: 'string' }, issue: { type: 'string' }, out: { type: 'string' }, 'settings-from': { type: 'string' }, variant: { type: 'string' } } });
+        if (!values.repo || !values.base || !values.issue || !values.out) throw new Error('attempt needs --repo, --base, --issue and --out');
+        const repo = /^[a-z+]+:\/\/|^git@/.test(values.repo) ? values.repo : resolve(io.cwd, values.repo);
+        const variant = values.variant ? loadVariant(resolve(io.cwd, values.variant)) : undefined;
+        const commit = factoryCommit();
+        const out = resolve(io.cwd, values.out);
+        const a = await attemptTask({
+          source: { repo, ...(values['settings-from'] ? { settingsFrom: values['settings-from'] } : {}) },
+          baseCommit: values.base,
+          issue: readFileSync(resolve(io.cwd, values.issue), 'utf8'),
+          ...(variant ? { variant } : {}),
+          dir: out,
+          factory,
+          env: io.env,
+          ...(commit ? { commit } : {}),
+        });
+        io.stdout(`factory ${a.factoryState}, ${a.merged ? 'merged' : 'not merged'}, ${a.reworkLoops} rework, $${a.costUsd.toFixed(2)} (${a.durationSeconds}s)${a.error ? `; ${a.error}` : ''}. Result in ${join(out, ATTEMPT_JSON)} and ${join(out, ATTEMPT_PATCH)}\n`);
+        return a.error ? 3 : 0;
+      }
+      case 'grade': {
+        const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { attempt: { type: 'string' }, label: { type: 'string' }, out: { type: 'string' }, json: { type: 'boolean' } } });
+        const [suiteDir, id] = positionals;
+        if (!suiteDir || !id || !values.attempt) throw new Error('grade needs a suite folder, a task and --attempt <dir>');
+        const suite = loadSuite(resolve(io.cwd, suiteDir));
+        const dir = resolve(io.cwd, values.attempt);
+        if (!existsSync(join(dir, ATTEMPT_JSON))) throw new Error(`no ${ATTEMPT_JSON} in ${dir}`);
+        const attempt = JSON.parse(readFileSync(join(dir, ATTEMPT_JSON), 'utf8')) as AttemptResult;
+        const patch = existsSync(join(dir, ATTEMPT_PATCH)) ? readFileSync(join(dir, ATTEMPT_PATCH), 'utf8') : '';
+        const r = await gradeAttempt({ suite, task: loadTask(suite, id), attempt, patch, dir, label: values.label ?? attempt.variant?.name ?? 'base', ...(runner ? { runner } : {}), cacheDir: join(suite.dir, '.grade-cache') });
+        if (values.out) appendFileSync(resolve(io.cwd, values.out), `${JSON.stringify(r)}\n`);
+        io.stdout(values.json ? `${JSON.stringify(r)}\n` : `${id}: ${r.passed ? 'PASS' : 'FAIL'}  factory ${r.factoryState}${r.grade ? `, hidden tests ${r.grade.verdict}: ${r.grade.reason}` : ''}${r.error ? `, ${r.error}` : ''}\n`);
+        return r.error ? 3 : 0;
       }
       case 'mine': {
         const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { out: { type: 'string' }, propose: { type: 'string' }, depth: { type: 'string' }, tests: { type: 'string' }, 'no-github': { type: 'boolean' }, 'no-check': { type: 'boolean' } } });

@@ -150,6 +150,30 @@ describe('factory eval', () => {
     expect(existsSync(join(root, 'scratch', 'source.git'))).toBe(false);
   });
 
+  it('runs a task in two halves: an attempt that never reads the suite, then a grade', async () => {
+    // The attempt is given the repository, the base and the issue text: nothing from the suite folder.
+    const issue = join(root, 'issue.md');
+    writeFileSync(issue, readFileSync(join(suite, 'tasks', 'greet', 'issue.md')));
+    const attempt = join(root, 'attempt');
+    const a = await factory(['eval', 'attempt', '--repo', join(root, 'project.git'), '--base', base, '--issue', issue, '--out', attempt]);
+    expect(a.code).toBe(0);
+    const facts = JSON.parse(readFileSync(join(attempt, 'attempt.json'), 'utf8'));
+    expect(facts).toMatchObject({ merged: true, graded: 'merged', variant: null });
+    const patch = readFileSync(join(attempt, 'attempt.patch'), 'utf8');
+    expect(patch).toContain('+hello');
+    expect(patch).not.toContain('.factory/');
+
+    const g = await factory(['eval', 'grade', suite, 'greet', '--attempt', attempt, '--json']);
+    expect(g.code).toBe(0);
+    expect(JSON.parse(g.stdout)).toMatchObject({ task: 'greet', label: 'base', merged: true, passed: true, grade: { verdict: 'pass' } });
+
+    // A variant's attempt is graded with the project's settings, and its result says which variant ran.
+    const shout = join(root, 'attempt-shout');
+    expect((await factory(['eval', 'attempt', '--repo', join(root, 'project.git'), '--base', base, '--issue', issue, '--out', shout, '--variant', join(root, 'shout.yaml')])).code).toBe(0);
+    const gs = JSON.parse((await factory(['eval', 'grade', suite, 'greet', '--attempt', shout, '--json'])).stdout);
+    expect(gs).toMatchObject({ label: 'shout', variant: { name: 'shout' }, merged: true, passed: false, grade: { verdict: 'fail' } });
+  });
+
   it('reports what the factory did on real work', async () => {
     await factory(['eval', 'run', suite, 'greet', '--label', 'base', '--out', join(root, 'r.jsonl')]);
     // Each task's factory state is kept beside the results, so stats can read it.

@@ -165,6 +165,14 @@ git with no CI or tracker, and the change gate is decided by the reviewer and me
 needs no one. When it stops, the merged result is graded. A task **passes** only when the factory
 merged its change and the hidden tests pass on it.
 
+Grading starts again from the base commit, with your project's settings (and `settings_from`),
+never a variant's, so every variant is graded the same way. It applies the factory's change,
+outside `.factory/`, then copies in the hidden tests. The two halves can also run apart, on
+different machines, so the machine the agents work on never holds the hidden tests:
+`factory eval attempt` runs the factory from just the repository, a base commit and the issue
+text, and writes `attempt.json` and `attempt.patch`; `factory eval grade <suite> <task> --attempt
+<dir>` grades them.
+
 Results go to `my-suite/results/<date>-<label>.jsonl` (or `--out`), one line per task: the
 outcome, rework rounds, cost, the grade, and the factory's commit. A rerun with the same file
 skips tasks already in it. Each task's scratch copy, factory state and log stay in
