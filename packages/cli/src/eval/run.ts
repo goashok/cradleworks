@@ -90,16 +90,28 @@ export function runnerFor(config: ProjectConfig, override?: Runner): Runner {
   return override ?? (config.adapters.sandbox === 'process' ? hostRunner : dockerRunner(findDocker()));
 }
 
-/** A scratch bare copy of the suite's repository whose main is the task's base commit plus the variant. */
+/**
+ * A scratch bare copy of the suite's repository whose main is the task's base commit plus the
+ * variant. It holds only the base commit's own history: nothing after it, no other branch and no
+ * tag, since the agents can read the checkout's git history, and a task taken from the project's
+ * past has its answer in a later commit.
+ */
 export function scratchRepo(suite: Suite, task: EvalTask, variant: Variant | undefined, dir: string): { remote: string; checkout: string } {
   const remote = join(dir, 'remote.git');
   const checkout = join(dir, 'checkout');
-  git(undefined, 'clone', '--quiet', '--bare', suite.repo, remote);
+  const source = join(dir, 'source.git');
+  git(undefined, 'clone', '--quiet', '--bare', suite.repo, source);
   try {
-    git(remote, 'cat-file', '-e', `${task.baseCommit}^{commit}`);
+    git(source, 'cat-file', '-e', `${task.baseCommit}^{commit}`);
   } catch {
+    rmSync(source, { recursive: true, force: true });
     throw new Error(`base commit ${task.baseCommit} is not in ${suite.repo}`);
   }
+  // Pushing one commit sends only what it can reach: its own history and nothing else.
+  git(undefined, 'init', '--quiet', '--bare', remote);
+  git(source, 'push', '--quiet', remote, `${task.baseCommit}:refs/heads/main`);
+  git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  rmSync(source, { recursive: true, force: true });
   git(undefined, 'clone', '--quiet', remote, checkout);
   git(checkout, 'checkout', '-q', '-B', 'main', task.baseCommit);
   applyVariant(checkout, variant);

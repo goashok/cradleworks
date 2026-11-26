@@ -106,7 +106,9 @@ factory eval run my-suite @smoke --label base-2
 ```
 
 For each task, the factory works on a **scratch copy** of your repository, never the repository
-itself: a bare clone whose `main` is the task's base commit. It runs `factory submit` there with
+itself: a bare repository whose `main` is the task's base commit, holding only that commit's own
+history. Later commits, other branches and tags are left out, since agents can read git history
+and a task taken from your past has its answer in a later commit. It runs `factory submit` there with
 its own state folder, as a person would. Whatever your `factory.yaml` says, an eval run uses local
 git with no CI or tracker, and the change gate is decided by the reviewer and merged, so a run
 needs no one. When it stops, the merged result is graded. A task **passes** only when the factory

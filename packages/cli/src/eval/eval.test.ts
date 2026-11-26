@@ -1,11 +1,12 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createBareRepo, git, ScriptedAgentRuntime } from '@cradleworks/contracts/fakes';
+import { createBareRepo, git, gitStatus, ScriptedAgentRuntime } from '@cradleworks/contracts/fakes';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { defaultRegistry, run, type Registry } from '../index.ts';
 import { compare } from './report.ts';
-import { readResults } from './run.ts';
+import { readResults, scratchRepo } from './run.ts';
+import { loadSuite, loadTask } from './suite.ts';
 import { loadVariant } from './variant.ts';
 
 const FACTORY_YAML = `project: demo
@@ -103,6 +104,28 @@ describe('factory eval', () => {
 
     const one = compare([{ file: 'a', results: readResults(out('base-1')) }], [{ file: 'b', results: readResults(out('shout')) }]);
     expect(one.verdict).toBe('unknown');
+  });
+
+  it('gives the factory a scratch copy with no history after the base: no later commit, branch or tag', async () => {
+    // The project moves on after the task's base: the answer lands, on main, a branch and a tag.
+    const work = join(root, 'later');
+    await git(['clone', '--quiet', join(root, 'project.git'), work]);
+    writeFileSync(join(work, 'greeting.txt'), 'hello\n');
+    await git(['-C', work, 'add', '-A']);
+    await git(['-C', work, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '-m', 'The answer']);
+    const answer = (await git(['-C', work, 'rev-parse', 'HEAD'])).stdout.trim();
+    await git(['-C', work, 'tag', 'v2']);
+    await git(['-C', work, 'push', '--quiet', 'origin', 'HEAD:main', 'HEAD:refs/heads/side', 'v2']);
+
+    const loaded = loadSuite(suite);
+    const { remote, checkout } = scratchRepo(loaded, loadTask(loaded, 'greet'), undefined, join(root, 'scratch'));
+    for (const gitDir of [join(checkout, '.git'), remote]) {
+      expect(await gitStatus(['--git-dir', gitDir, 'cat-file', '-e', `${answer}^{commit}`])).not.toBe(0);
+      expect((await git(['--git-dir', gitDir, 'for-each-ref', '--format=%(refname)'])).stdout).not.toMatch(/side|v2/);
+    }
+    const log = (await git(['-C', checkout, 'log', '--all', '--format=%s'])).stdout.trim().split('\n');
+    expect(log).not.toContain('The answer');
+    expect((await git(['-C', checkout, 'rev-parse', 'main~1'])).stdout.trim()).toBe(base);
   });
 
   it('reports what the factory did on real work', async () => {
