@@ -51,12 +51,12 @@ function registry(): Registry {
   };
 }
 
-async function factory(args: string[], cwd = checkout, reg: Registry = registry()) {
+async function factory(args: string[], cwd = checkout, reg: Registry = registry(), env: Record<string, string> = {}) {
   let stdout = '';
   let stderr = '';
   const code = await run(args, {
     cwd,
-    env: { CRADLEWORKS_HOME: home, USER: 'tester' },
+    env: { CRADLEWORKS_HOME: home, USER: 'tester', ...env },
     stdout: (t) => (stdout += t),
     stderr: (t) => (stderr += t),
     registry: reg,
@@ -338,8 +338,9 @@ describe('factory watch', () => {
     expect(detail.stdout).toMatch(/Spec\n {2}spec_\S+ version 1, not approved yet/);
     expect(detail.stdout).toMatch(/ specify {2}succeeded {2}\S+ {2}scripted\/none\n/);
 
-    expect(await factory(['approve', wiId], checkout, reg)).toMatchObject({ code: 0, stdout: expect.stringContaining('Approved the spec v1 of') });
-    expect(tracker.factoryComments(issue).at(-1)).toContain('**Spec approved** by');
+    // Someone acting through a hosted console is named by CRADLEWORKS_ACTOR, not the machine's git user.
+    expect(await factory(['approve', wiId], checkout, reg, { CRADLEWORKS_ACTOR: 'Jordan Lee' })).toMatchObject({ code: 0, stdout: expect.stringContaining('Approved the spec v1 of') });
+    expect(tracker.factoryComments(issue).at(-1)).toContain('**Spec approved** by Jordan Lee');
 
     const second = await factory(['watch', '--once'], checkout, reg);
     expect(second.stdout).toContain('#1 plan_check approved (ai)');

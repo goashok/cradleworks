@@ -1215,7 +1215,10 @@ function factoryHome(io: CliEnv): string {
   return resolve(io.env.CRADLEWORKS_HOME ?? join(homedir(), '.cradleworks'));
 }
 
+/** Who is acting: CRADLEWORKS_ACTOR when a hosted console runs the command for a signed-in person, else the git user. */
 async function requester(repoRoot: string, io: CliEnv): Promise<string> {
+  const actor = io.env.CRADLEWORKS_ACTOR?.trim();
+  if (actor) return actor;
   const name = await gitOutput(['config', 'user.name'], repoRoot).catch(() => '');
   return name || io.env.USER || userInfo().username;
 }
