@@ -186,7 +186,10 @@ export async function attemptTask(a: AttemptInput): Promise<AttemptResult> {
   const issueFile = join(a.dir, 'issue.md');
   writeFileSync(issueFile, a.issue);
   const home = join(a.dir, 'home');
-  const ran = await a.factory(['submit', issueFile], scratch.checkout, { ...a.env, CRADLEWORKS_HOME: home });
+  // Its own state, always in the attempt's folder: never a shared database the environment names,
+  // where eval work would mix with the team's real work items.
+  const { CRADLEWORKS_DATABASE_URL: _url, CRADLEWORKS_DATABASE_SCHEMA: _schema, CRADLEWORKS_TENANT: _tenant, ...env } = a.env;
+  const ran = await a.factory(['submit', issueFile], scratch.checkout, { ...env, CRADLEWORKS_HOME: home });
   writeFileSync(join(a.dir, 'factory.log'), `${ran.stdout}\n${ran.stderr}`);
   const wiId = /as (wi_\S+)/.exec(ran.stdout)?.[1];
   if (!wiId) return done({ error: `the factory did not take the task: ${(ran.stderr || ran.stdout).trim().split('\n').at(-1) ?? ''}` });

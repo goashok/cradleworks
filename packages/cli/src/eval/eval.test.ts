@@ -155,7 +155,11 @@ describe('factory eval', () => {
     const issue = join(root, 'issue.md');
     writeFileSync(issue, readFileSync(join(suite, 'tasks', 'greet', 'issue.md')));
     const attempt = join(root, 'attempt');
-    const a = await factory(['eval', 'attempt', '--repo', join(root, 'project.git'), '--base', base, '--issue', issue, '--out', attempt]);
+    // A shared database in the environment is not used: the attempt keeps its own state.
+    let out = '';
+    const a = { code: await run(['eval', 'attempt', '--repo', join(root, 'project.git'), '--base', base, '--issue', issue, '--out', attempt], { cwd: root, env: { CRADLEWORKS_HOME: join(root, 'home'), USER: 'tester', CRADLEWORKS_DATABASE_URL: 'postgres://nobody@127.0.0.1:1/none' }, stdout: (t) => (out += t), stderr: (t) => (out += t), registry: registry() }) };
+    expect(out).not.toMatch(/ECONNREFUSED|postgres/i);
+    expect(existsSync(join(attempt, 'home', 'state.db'))).toBe(true);
     expect(a.code).toBe(0);
     const facts = JSON.parse(readFileSync(join(attempt, 'attempt.json'), 'utf8'));
     expect(facts).toMatchObject({ merged: true, graded: 'merged', variant: null });
