@@ -10,6 +10,7 @@ import { Orchestrator, WorkItemRepository, type Evidence, type Progress, type Pr
 import { AGENT_ROLES, type AgentRuntime, type CI, type StateStore, type Tracker } from '@cradleworks/interfaces';
 import { findDocker } from '@cradleworks/adapter-local';
 import { openStore } from './store.ts';
+import { checkImage } from './image-check.ts';
 import { recoverOpenWork, runPass, type PassEvent } from '@cradleworks/runner';
 import { formatLog } from './log.ts';
 import { checkRequirements, checkSkills, skillsCommand, type RequirementRunner } from './skills.ts';
@@ -296,6 +297,7 @@ async function validateProject(args: string[], io: CliEnv): Promise<number> {
   const drill = checkDrill(repoRoot, config);
   problems.push(...drill.problems);
   notes.push(...drill.notes);
+  notes.push(...checkImage(repoRoot));
 
   // Prompt additions: one file per role, added to that role's prompt once on the base branch.
   const additions = globSync('.factory/prompts/*.md', { cwd: repoRoot }).sort();

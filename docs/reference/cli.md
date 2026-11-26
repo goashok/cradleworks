@@ -312,6 +312,7 @@ It reports:
 - skills: a folder without a valid `SKILL.md`, one not in `.factory/skills.lock` or changed since it was locked, a lock entry with no folder, and a role naming a skill that isn't there; a vendored skill no role uses is a note
 - a skill's requirements: each command recorded with `factory skills require` (or guessed by `add`) for a skill a role uses is run in a throwaway container of `stack.image`, with no network; one that fails is a problem. When the image isn't built yet, it's a note instead
 - whether `stack.image` has been built on this machine (a note, not an error)
+- a `COPY` or `ADD` in `.factory/image/`'s Dockerfile that copies the whole repository (`--from=project .`) into the image (a note: the code is mounted at `/workspace` for every step, so a copy in the image only goes stale)
 
 It prints `ok` and exits 0 when there are no problems, or 2 when there are.
 

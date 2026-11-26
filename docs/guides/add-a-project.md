@@ -121,6 +121,11 @@ Things that help in practice:
 - **Include the small tools agents reach for.** In our runs, agents often tried `python3` for
   quick file edits. When it's missing they fall back to other tools, but that costs a little time
   on each run.
+- **Keep your code out of the image.** For every step, the factory mounts the task's own copy of
+  the code at `/workspace`, so code copied into the image is never what the agent works on. It only
+  goes stale, and it makes the image change with every commit, so a built image can't be reused.
+  Copy in only what installs dependencies, such as `package.json` and `package-lock.json`.
+  `factory validate` notes a `COPY` or `ADD` of the whole repository.
 - **Pin versions** and bump the image tag when you change the image (`:1` → `:2`), so runs are
   reproducible.
 - The container runs as **your user id**, with every capability dropped and no privilege
