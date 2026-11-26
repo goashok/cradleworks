@@ -31,6 +31,10 @@ For someone new to Cradleworks. Uses the example project, so nothing of theirs i
 
 ## Their own repository
 
+0. **The quick way.** `factory docs add-a-project "The quick way: factory init"`. `factory init`
+   writes all of the steps below and checks them in Docker. With an agent it costs up to $2
+   (`--budget`), so say so; with `--no-agent` it is free. Check: it ends with "its checks pass",
+   then `factory validate`. Use the steps below to understand or change what it wrote.
 1. **factory.yaml.** `factory docs add-a-project "1. Write factory.yaml"`. Fill `stack.build`
    and `stack.test` from how they build and test today. Check: `factory validate` (an image
    that isn't built yet is a note, not a problem).

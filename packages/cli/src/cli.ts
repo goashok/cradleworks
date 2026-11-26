@@ -20,6 +20,7 @@ import { explain, formatExplained, formatKeyList } from './explain.ts';
 import { computeStats, formatStats, type StatsItem } from './stats.ts';
 import { AgentsByName } from './agents.ts';
 import { defaultRegistry, PLANNED_ADAPTERS, type Registry } from './registry.ts';
+import { formatInitReport, initProject } from './init/init.ts';
 
 export interface CliEnv {
   cwd: string;
@@ -42,6 +43,8 @@ export async function run(argv: string[], io: CliEnv): Promise<number> {
         return await status(rest, io);
       case 'validate':
         return await validateProject(rest, io);
+      case 'init':
+        return await initCommand(rest, io);
       case 'log':
         return await log(rest, io);
       case 'approve':
@@ -150,6 +153,11 @@ const USAGE = `Usage:
   factory stats [--days <n>] [--project <name>] [--json]
                                     How the factory did on real work: gates, send-backs, rework,
                                     agent checks, cost and time per merged change
+  factory init [<dir>] [--no-agent] [--model <id>] [--budget <usd>] [--rounds <n>] [--force] [--json]
+                                    Write .factory/ for a repository: a draft from its files, which
+                                    an agent improves; the image is built and build and test run
+                                    in it. Exits 0 when they pass, 1 when they don't (the files
+                                    are written either way, with what failed)
   factory validate [<dir>] [--json] Check a project's .factory/ setup without running anything
   factory docs [<topic> [<section>]] [--search <words>]
                                     The guides and reference for this version, at the terminal
@@ -165,11 +173,66 @@ const USAGE = `Usage:
 
 <id> is a work item id (wi_…) or a task id (task_…).
 
-Run inside a repository that has a .factory/ folder. Factory state lives in
+Run inside a repository that has a .factory/ folder (factory init writes one). Factory state lives in
 $CRADLEWORKS_HOME (default ~/.cradleworks).
 `;
 
 class UsageError extends Error {}
+
+// --- init ---------------------------------------------------------------------
+
+async function initCommand(args: string[], io: CliEnv): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { 'no-agent': { type: 'boolean' }, model: { type: 'string' }, budget: { type: 'string' }, rounds: { type: 'string' }, force: { type: 'boolean' }, json: { type: 'boolean' } },
+  });
+  if (positionals.length > 1) throw new UsageError('init takes at most one folder: factory init [<dir>]');
+  const budgetUsd = values.budget === undefined ? 2 : Number(values.budget);
+  if (!(budgetUsd >= 0)) throw new UsageError('--budget must be a number of US dollars');
+  const rounds = values.rounds === undefined ? 3 : Number(values.rounds);
+  if (!Number.isInteger(rounds) || rounds < 1 || rounds > 10) throw new UsageError('--rounds must be a whole number from 1 to 10');
+  const start = resolve(io.cwd, positionals[0] ?? '.');
+  const root = await gitOutput(['rev-parse', '--show-toplevel'], start).catch(() => '');
+  if (!root) throw new UsageError(`${start} is not in a git repository`);
+  if (!(await gitOutput(['rev-parse', '--verify', '--quiet', 'HEAD'], root).catch(() => ''))) throw new UsageError('the repository has no commits yet; commit something first');
+  if (existsSync(join(root, '.factory', 'factory.yaml')) && !values.force) throw new UsageError(`${join(root, '.factory', 'factory.yaml')} already exists; pass --force to write over it`);
+  const tracked = (await gitOutput(['ls-files'], root)).split('\n').filter(Boolean);
+
+  const registry = io.registry ?? defaultRegistry();
+  const remote = await gitOutput(['remote', 'get-url', 'origin'], root).catch(() => '');
+  const scm = (remote && Object.entries(registry.sourceControl).find(([id, e]) => id !== 'local-git' && e.repoFromRemote(remote))?.[0]) || 'local-git';
+  const repo = (scm !== 'local-git' && registry.sourceControl[scm]!.repoFromRemote(remote)) || registry.sourceControl['local-git']!.repoFromRemote(root)!;
+  const ci = scm === 'github' && tracked.some((p) => p.startsWith('.github/workflows/')) ? 'github-actions' : scm === 'gitlab' && tracked.includes('.gitlab-ci.yml') ? 'gitlab-ci' : 'none';
+  const tracker = scm === 'github' ? 'github-issues' : scm === 'gitlab' ? 'gitlab-issues' : 'none';
+
+  const sandbox = registry.sandbox['local-docker']!(factoryHome(io));
+  const runtime = values['no-agent'] ? undefined : registry.runtime['cli-agent']!({ sandbox, env: io.env });
+  const say = (line: string) => (values.json ? io.stderr : io.stdout)(`${line}\n`);
+  const docker = findDocker();
+  const report = await initProject(
+    { root, repo, adapters: { scm, ci, tracker }, model: values.model ?? 'claude-sonnet-5-5', budgetUsd, rounds },
+    {
+      sandbox,
+      runtime,
+      progress: say,
+      removeImage: async (tag) => void (await promisify(execFile)(docker, ['image', 'rm', '--force', tag], { timeout: 60_000 })),
+      buildImage: async ({ dockerfileDir, projectDir, tag }) => {
+        try {
+          const { stdout, stderr } = await promisify(execFile)(docker, ['build', '--build-context', `project=${projectDir}`, '-t', tag, dockerfileDir], { timeout: 30 * 60_000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, DOCKER_BUILDKIT: '1' } });
+          return { ok: true, output: `${stdout}${stderr}` };
+        } catch (error) {
+          const e = error as { stdout?: string; stderr?: string; message: string };
+          return { ok: false, output: `${e.stdout ?? ''}${e.stderr ?? ''}` || e.message };
+        }
+      },
+    },
+    { trackedFiles: tracked },
+  );
+  if (values.json) io.stdout(`${JSON.stringify(report)}\n`);
+  else io.stdout(formatInitReport(report));
+  return report.ok ? 0 : 1;
+}
 
 // --- validate -----------------------------------------------------------------
 

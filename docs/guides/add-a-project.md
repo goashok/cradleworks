@@ -13,6 +13,34 @@ your-repo/
     image/Dockerfile      the sandbox image (any path works; this is the convention)
 ```
 
+## The quick way: `factory init`
+
+In the repository, with Docker running:
+
+```sh
+factory init
+```
+
+It writes all three for you and checks them:
+
+1. It drafts them from the repository's own files. The language and package manager come from
+   manifests and lockfiles, and the commands from its scripts and the commands its CI runs.
+   Node, Python, Go, Rust, Maven and Gradle are recognised.
+2. An agent reads the repository in a sandbox, corrects the draft, and writes rules for this
+   project. It can change files only under `.factory/`.
+3. The factory builds the image and runs `build`, `test` and the other commands in it. If one
+   fails, the agent gets the output and tries again, up to `--rounds` (3) and within `--budget`
+   ($2).
+
+It writes the files even when a check still fails, and says which one and why. It needs
+credentials for the agent, as `submit` does. With `--no-agent`, it checks the draft without
+one, for free.
+
+The checks build the image under a temporary name and remove it afterwards, so build it once
+yourself with the `docker build` line at the top of the Dockerfile. Then read the files, commit
+them, and go to [5. Validate and run](#5-validate-and-run). The sections below explain each file,
+for when you'd rather write them by hand or change what `init` wrote.
+
 ## 1. Write `factory.yaml`
 
 Start from this and change the `stack` section to your project's commands. Anything you leave

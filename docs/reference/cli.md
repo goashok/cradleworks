@@ -21,6 +21,7 @@ factory eval check <suite> [<task> | @<set> ...]
 factory eval report <results.jsonl>...
 factory eval compare --base <results.jsonl>... --variant <results.jsonl>... [--json]
 factory stats [--days <n>] [--project <name>] [--json]
+factory init [<dir>] [--no-agent] [--model <id>] [--budget <usd>] [--rounds <n>] [--force] [--json]
 factory validate [<dir>] [--json]
 factory docs [<topic> [<section>]] [--sections] [--search <words>]
 factory config explain [<key>...]
@@ -261,6 +262,38 @@ happens on this machine; nothing is committed, so the result is a change to revi
 | `lock <name>` | Records the folder as it is now. A changed copy of someone else's skill becomes your own, with where it was forked from |
 
 Exit status: 0 done, 2 refused (bad source, an existing skill on `add`, a local skill on `update`).
+
+## `factory init [<dir>]`
+
+Writes `.factory/` (`factory.yaml`, `image/Dockerfile` and `rules/`) for the git repository
+holding `<dir>` (default: the current folder), and checks that it works. See
+[Add your own project](../guides/add-a-project.md#the-quick-way-factory-init).
+
+1. It drafts the files from the repository's tracked files: manifests, lockfiles, scripts and the
+   commands its CI runs. The adapters follow the `origin` remote: GitHub or GitLab, with their CI
+   when the repository has CI files; otherwise `local-git`.
+2. Unless `--no-agent` is given, an agent (`--model`, default `claude-sonnet-5-5`) reviews the
+   draft in a sandbox and writes the project's rules. It can change only `.factory/factory.yaml`,
+   files in `.factory/image/`, and `.factory/rules/*.md`; anything else it writes is left out.
+3. The factory builds the image and runs each `stack` command in it, `build` first, with the
+   project's network allow-list. If a check fails, the agent is given the output and another
+   round, up to `--rounds` rounds (default 3) and `--budget` US dollars in total (default 2).
+
+Sandboxes work from a temporary clone of the last commit, and images are built under a
+temporary tag that is removed afterwards. Nothing is committed. It won't write over an existing
+`.factory/factory.yaml` unless you pass `--force`.
+
+| Flag | Meaning |
+| --- | --- |
+| `--no-agent` | Check the draft as detected; no model is called |
+| `--model <id>` | The agent's model |
+| `--budget <usd>` | Spending cap across every agent round (default 2) |
+| `--rounds <n>` | Agent rounds at most, 1 to 10 (default 3) |
+| `--force` | Write over an existing `.factory/` |
+| `--json` | Print one object, with progress on standard error: `ok`, `project`, `stack`, `files`, `checks` (each with `name`, `command`, `ok`, `seconds` and `tail`, the end of its output), `agent` (`ran`, `rounds`, `costUsd`, `summary`, `note`) and `notes` |
+
+Exits 0 when every check passes, 1 when one doesn't (the files are still written), and 2 on bad
+usage, a folder that isn't a git repository, or a repository with no commits.
 
 ## `factory validate [<dir>] [--json]`
 
