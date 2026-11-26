@@ -18,10 +18,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findDocker } from '@cradleworks/adapter-local';
 import { loadProjectConfig } from '@cradleworks/config';
-import { WorkItemRepository, type ProjectConfig } from '@cradleworks/core';
+import { resolveAgent, WorkItemRepository, type ProjectConfig } from '@cradleworks/core';
 import { SqliteStateStore } from '@cradleworks/store-sqlite';
 import { checkoutAt, dockerRunner, gradeCheckout, hostRunner, type GradeResult, type Runner } from './grade.ts';
 import { loadTask, type EvalTask, type Suite } from './suite.ts';
+import { traceOf, type AttemptTrace } from './trace.ts';
 import { applyVariant, overlaySettings, type Variant } from './variant.ts';
 
 /** Runs a `factory` command in-process. */
@@ -45,6 +46,7 @@ export interface EvalResult {
   /** What was graded: the merged main, the unmerged branch, or nothing. */
   graded: 'merged' | 'branch' | 'none';
   grade?: Omit<GradeResult, 'log'>;
+  trace?: AttemptTrace;
   passed: boolean;
   error?: string;
 }
@@ -63,6 +65,8 @@ export interface AttemptResult {
   costUsd: number;
   /** What the patch holds: the merged main, the unmerged branch, or nothing. */
   graded: 'merged' | 'branch' | 'none';
+  /** Each station run with its agents' models, cost and time, what Verify found, and how it ended. */
+  trace?: AttemptTrace;
   error?: string;
 }
 
@@ -165,6 +169,18 @@ export interface AttemptInput {
   commit?: string;
 }
 
+const ROLES = ['specifier', 'planner', 'implementer', 'tester', 'reviewer'] as const;
+
+/** Each role's model as the attempt's settings resolve it. */
+function modelsOf(checkout: string): Record<string, string> {
+  try {
+    const config = loadProjectConfig(checkout);
+    return Object.fromEntries(ROLES.map((r) => [r, resolveAgent(config, r).model]));
+  } catch {
+    return {};
+  }
+}
+
 /** Runs the factory on a task: the half of a run that never sees the hidden tests. */
 export async function attemptTask(a: AttemptInput): Promise<AttemptResult> {
   const started = Date.now();
@@ -200,6 +216,7 @@ export async function attemptTask(a: AttemptInput): Promise<AttemptResult> {
   let reworkLoops = 0;
   let costUsd = 0;
   let branch: string | undefined;
+  let trace: AttemptTrace | undefined;
   try {
     const wi = await new WorkItemRepository(store).load(wiId);
     if (wi) {
@@ -208,11 +225,18 @@ export async function attemptTask(a: AttemptInput): Promise<AttemptResult> {
       reworkLoops = wi.tasks.reduce((n, t) => n + t.reworkLoops, 0);
       costUsd = wi.spentUsd;
       branch = wi.tasks[0]?.branch;
+      try {
+        trace = traceOf(await store.readStream(wiId), modelsOf(scratch.checkout));
+        const why = wi.endReason ?? wi.blockedReason;
+        if (!merged && !trace.endReason && why) trace.endReason = why;
+      } catch {
+        // The trace is a report; an attempt without one is still graded.
+      }
     }
   } finally {
     await store.close();
   }
-  const facts = { workItemId: wiId, factoryState: state, merged, reworkLoops, costUsd };
+  const facts = { workItemId: wiId, factoryState: state, merged, reworkLoops, costUsd, ...(trace ? { trace } : {}) };
   const ref = merged ? 'main' : branch;
   if (!ref) return done(facts);
   try {

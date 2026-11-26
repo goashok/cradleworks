@@ -163,6 +163,9 @@ describe('factory eval', () => {
     expect(a.code).toBe(0);
     const facts = JSON.parse(readFileSync(join(attempt, 'attempt.json'), 'utf8'));
     expect(facts).toMatchObject({ merged: true, graded: 'merged', variant: null });
+    // What the factory did, station by station, from the attempt's own log.
+    expect(facts.trace.steps.map((s: { station: string }) => s.station)).toContain('build');
+    expect(facts.trace.steps.find((s: { station: string }) => s.station === 'verify')).toMatchObject({ verdict: 'pass' });
     const patch = readFileSync(join(attempt, 'attempt.patch'), 'utf8');
     expect(patch).toContain('+hello');
     expect(patch).not.toContain('.factory/');

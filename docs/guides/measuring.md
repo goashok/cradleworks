@@ -174,7 +174,10 @@ text, and writes `attempt.json` and `attempt.patch`; `factory eval grade <suite>
 <dir>` grades them.
 
 Results go to `my-suite/results/<date>-<label>.jsonl` (or `--out`), one line per task: the
-outcome, rework rounds, cost, the grade, and the factory's commit. A rerun with the same file
+outcome, rework rounds, cost, the grade, the factory's commit, and a `trace`: each station run
+(Specify, Plan, each Build and Verify) with its agents' models, cost and time, what Verify and the
+reviewer found, the gate decisions and reworks along the way, and why the work stopped when it
+did not merge. A rerun with the same file
 skips tasks already in it. Each task's scratch copy, factory state and log stay in
 `results/<label>.d/<task>/`, so you can replay a run with `CRADLEWORKS_HOME=results/<label>.d/<task>/home factory log <id>`.
 `--jobs <n>` runs several tasks at once.
