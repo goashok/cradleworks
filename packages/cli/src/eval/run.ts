@@ -24,6 +24,7 @@ import { checkoutAt, dockerRunner, gradeCheckout, hostRunner, type GradeResult, 
 import { loadTask, type EvalTask, type Suite } from './suite.ts';
 import { traceOf, type AttemptTrace } from './trace.ts';
 import { applyVariant, overlaySettings, type Variant } from './variant.ts';
+import { factoryVersion } from '../version.ts';
 
 /** Runs a `factory` command in-process. */
 export type FactoryCall = (args: string[], cwd: string, env: Record<string, string | undefined>) => Promise<{ code: number; stdout: string; stderr: string }>;
@@ -94,11 +95,7 @@ const sh = (dir: string | undefined, cmd: string, args: string[]) =>
 const git = (dir: string | undefined, ...args: string[]) => sh(dir, 'git', ['-c', 'core.hooksPath=/dev/null', ...args]);
 
 export function factoryCommit(): string | undefined {
-  try {
-    return git(dirname(fileURLToPath(import.meta.url)), 'rev-parse', 'HEAD');
-  } catch {
-    return undefined;
-  }
+  return factoryVersion().commit;
 }
 
 export function readResults(file: string): EvalResult[] {

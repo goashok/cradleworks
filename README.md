@@ -119,6 +119,7 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 - [Measure your own factory](docs/guides/measuring.md): an eval suite on your code, config variants, the noise band, `factory stats`
 - [How Cradleworks is measured](docs/guides/evaluating.md): its own eval suite and baselines
 - [Write an adapter](docs/guides/writing-an-adapter.md): plug in another SCM, sandbox or agent
+- [Releasing the factory](docs/guides/releasing.md): the package on each GitHub release, `cradleworks/hosting`, and depending on it
 
 **Reference**
 - [Configuration](docs/reference/configuration.md): every `factory.yaml` key, and which ones take effect today

@@ -1,0 +1,14 @@
+{
+  // The published package: JavaScript and type declarations, in the same folders as the sources,
+  // so the factory still finds defaults/ and docs/ next to its code. scripts/build-package.ts runs it.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": ".",
+    "outDir": "dist/package"
+  },
+  "include": ["packages/*/src/**/*.ts"],
+  "exclude": ["packages/*/src/**/*.test.ts", "packages/*/src/**/fixtures/**", "packages/contracts/src/*.contract.ts", "packages/contracts/src/assert.ts", "packages/contracts/src/index.ts"]
+}

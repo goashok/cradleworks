@@ -22,7 +22,8 @@
     "@cradleworks/interfaces": "workspace:*",
     "@cradleworks/runner": "workspace:*",
     "@cradleworks/store-postgres": "workspace:*",
-    "@cradleworks/store-sqlite": "workspace:*"
+    "@cradleworks/store-sqlite": "workspace:*",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
