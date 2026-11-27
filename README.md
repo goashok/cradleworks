@@ -165,4 +165,4 @@ GitHub, Docker and Claude Code replaceable. `pnpm check:core-rule` enforces it i
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE). Versions up to and including 0.1.1 were released under the MIT License.

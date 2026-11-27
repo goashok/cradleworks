@@ -39,7 +39,7 @@ for (const p of packages) {
     cpSync(f, to);
   }
 }
-for (const d of ['defaults', 'docs', 'skills', 'LICENSE', 'README.md']) cpSync(join(root, d), join(out, d), { recursive: true });
+for (const d of ['defaults', 'docs', 'skills', 'LICENSE', 'NOTICE', 'README.md']) cpSync(join(root, d), join(out, d), { recursive: true });
 
 // 3. The packages reach each other by name (`@cradleworks/core`) inside the workspace; in the
 //    package they are folders, so each name becomes a relative path. `.ts` left in declarations
