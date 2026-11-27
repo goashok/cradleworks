@@ -163,6 +163,11 @@ examples/hello-node/    the quick start project
 imports only `@cradleworks/interfaces`, Node built-ins and its own files. That's what keeps
 GitHub, Docker and Claude Code replaceable. `pnpm check:core-rule` enforces it in CI.
 
+## Contributing
+
+Cradleworks is open source but doesn't take outside pull requests. Bug reports and ideas are
+welcome as issues. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [Apache License 2.0](LICENSE). See [NOTICE](NOTICE). Versions up to and including 0.1.1 were released under the MIT License.

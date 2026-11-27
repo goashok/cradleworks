@@ -1,0 +1,24 @@
+# Closes pull requests from outside the project, with a pointer to CONTRIBUTING.md.
+# pull_request_target runs with this repository's permissions, so the workflow never checks out
+# or runs the pull request's code, and never puts its title or body into a shell command.
+name: Close outside pull requests
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    if: ${{ !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr close "$PR" --repo "$REPO" --comment "Thank you for taking the time. Cradleworks doesn't take outside contributions, so this pull request has been closed without review. Bug reports and ideas are welcome as issues: see [CONTRIBUTING.md](https://github.com/$REPO/blob/main/CONTRIBUTING.md)."
