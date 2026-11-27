@@ -1,0 +1,13 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+___________________________ test_charges_at_23_hours ___________________________
+
+    def test_charges_at_23_hours():
+>       assert 0 == 20
+E       assert 0 == 20
+
+tests/test_fees.py:5: AssertionError
+---------------- generated xml file: /workspace/out/pytest.xml -----------------
+=========================== short test summary info ============================
+FAILED tests/test_fees.py::test_charges_at_23_hours - assert 0 == 20
+1 failed, 1 passed in 0.01s

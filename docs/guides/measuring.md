@@ -113,22 +113,42 @@ would write the issue. Don't mention the hidden tests.
 
 **Grading.** The grader checks out the result on this machine, copies `hidden/` over it, and runs
 the grading command in the project's `stack.image`, in a throwaway container with your user id and
-a home folder kept between grades for build caches. JUnit XML written to the `reports` folders or
-to `$GRADER_REPORTS` is read. With reports, a pass also needs hidden test cases to have run: a
-change that skips or empties the tests doesn't pass by exiting 0. A failure only in your
-project's own tests runs once more, since it may be a flaky test you already have; a failing
-hidden test never does.
+a home folder kept between grades for build caches. A failure only in your project's own tests
+runs once more, since it may be a flaky test you already have; a failing hidden test never does.
 
-**JUnit reports by test runner.** Point `reports` at the folder your runner writes, or write to
-`$GRADER_REPORTS`, which every grade sets:
+**What a grade says.** The grader reads which tests ran and how each went, so a grade names the
+failing tests rather than an exit code: for example "1 of 9 hidden tests failed: null schema logs
+once (expected 1, got 2)". It says so separately when the change does not build or load, when a
+hidden test file did not load, when only your project's own tests failed, when the tests ran past
+the time limit, and when the change edited a file the hidden tests replace. Each grade also keeps
+the failing tests (name, file and line, hidden or not, the message, expected against actual), the
+counts, and the last 80 lines of the command's output. These are for people: nothing from a grade
+goes back to the factory's agents.
+
+Where the tests are read from, in order:
+
+1. JUnit XML in the `reports` folders, `$GRADER_REPORTS` (which every grade sets), or the folders
+   Maven and Gradle write without being asked (`target/surefire-reports`, `build/test-results`).
+2. Reports the grader asks for itself: Node's test runner (through `NODE_OPTIONS`, when that Node
+   accepts reporter flags there and the project does not pick its own `--test-reporter`) and pytest
+   (through `PYTEST_ADDOPTS`). Their usual output is unchanged. If a run with them fails and leaves
+   nothing to read, it runs again without them.
+3. The runner's own output: Node's TAP, Vitest and Jest. Jest's output does not say which file each
+   passing test is in, so for Jest the hidden-test count is left out unless it writes JUnit.
+
+With a report that names each test's file (or `reports` set), a pass also needs hidden test cases
+to have run: a change that skips or empties the tests doesn't pass by exiting 0. Where the runner
+gives no file for a test (Node 20 and 22), a test counts as hidden when its name is written in a
+hidden test file; that is used for counts and wording, never to fail a grade.
+
+**Writing JUnit yourself.** For Vitest and Jest, a report gives the fullest grade:
 
 | Runner | In the grading command |
 | --- | --- |
-| Maven Surefire | nothing: `reports: [target/surefire-reports]` |
-| Gradle | nothing: `reports: [build/test-results]` |
+| Maven Surefire, Gradle | nothing |
+| Node's test runner, pytest | nothing |
 | Vitest | `npx vitest run --reporter=default --reporter=junit --outputFile.junit=$GRADER_REPORTS/junit.xml` |
 | Jest (with the `jest-junit` package) | `JEST_JUNIT_OUTPUT_DIR=$GRADER_REPORTS npx jest --reporters=default --reporters=jest-junit` |
-| pytest | `pytest --junitxml=$GRADER_REPORTS/junit.xml` |
 
 Put hidden tests where their path says so (for example `test/hidden/`), so the default `hidden`
 pattern finds them in the report.

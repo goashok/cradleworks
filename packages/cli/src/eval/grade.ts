@@ -7,10 +7,13 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { hiddenFiles, type EvalTask } from './suite.ts';
+import { buildError, logTail, readOutput, relativeFile, REPORT_PREFIX, type OutputReading, type TestCase } from './test-output.ts';
+
+export type { TestCase } from './test-output.ts';
 
 export interface RunSpec {
   /** The checkout, with the hidden tests copied in. */
@@ -29,12 +32,16 @@ export interface RunSpec {
 /** Runs the grading command; returns its exit code, or 'timeout'. */
 export type Runner = (spec: RunSpec) => Promise<number | 'timeout'>;
 
-export interface TestCase {
-  classname: string;
+/** A failing test, for a person to read. */
+export interface FailedTest {
   name: string;
-  suite: string;
-  outcome: 'passed' | 'failed' | 'skipped';
+  file?: string;
+  line?: number;
+  /** A hidden test, or one of the project's (or the factory's) own. */
+  hidden: boolean;
   message?: string;
+  expected?: string;
+  actual?: string;
 }
 
 export interface GradeResult {
@@ -45,8 +52,16 @@ export interface GradeResult {
   attempts: number;
   /** Non-hidden tests that failed, then passed on the retry. */
   flaky: string[];
-  tests?: { total: number; failed: number; hidden: number; hiddenFailed: number };
+  /** `hidden` is null when the runner's output gives failures but not which tests ran where (Jest). */
+  tests?: { total: number; failed: number; hidden: number | null; hiddenFailed: number };
+  /** The failures as one line each, for older readers. */
   failures: string[];
+  /** The failing tests, hidden ones first. */
+  failed: FailedTest[];
+  /** Where the test cases came from: a JUnit report, the runner's output, or nowhere. */
+  source: 'junit' | 'output' | 'none';
+  /** The last 80 lines of the grading command's output. For people only, never for the agents. */
+  outputTail: string;
   /** Files the result changed that the hidden tests overwrote. */
   overwritten: string[];
   durationSeconds: number;
@@ -77,14 +92,26 @@ export function parseJUnit(xml: string): TestCase[] {
   for (let m = re.exec(xml); m; m = re.exec(xml)) {
     const at = m.index;
     const body = m[3] ?? '';
-    const failure = /<(failure|error)\b([^>]*)/.exec(body);
-    const message = failure ? attr(failure[2]!, 'message') : undefined;
+    const failure = /<(failure|error)\b([^>]*)>?([\s\S]*?)(?:<\/(?:failure|error)>|$)/.exec(body);
+    const message = failure ? (attr(failure[2]!, 'message') ?? decode(failure[3] ?? '')) : undefined;
+    // Node's report spells out the assertion: "actual: 3," and "expected: 2," in the failure's text.
+    const detail = failure ? decode(failure[3] ?? '') : '';
+    const expected = /^\s*expected: (.+?),?$/m.exec(detail)?.[1];
+    const actual = /^\s*actual: (.+?),?$/m.exec(detail)?.[1];
+    const frame = /\((?:file:\/\/)?(\/[^():]+?\.\w+):(\d+):\d+\)/.exec(detail);
+    const own = attr(m[1]!, 'file');
+    // The report's file (Node 24 and later) has no line; the stack's first frame in it does.
+    const file = own ? (frame && frame[1] === own ? `${own}:${frame[2]}` : own) : frame && !frame[1]!.startsWith('node:') ? `${frame[1]}:${frame[2]}` : undefined;
+    const lines = (message ?? '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 3).map((l) => l.slice(0, 300));
     cases.push({
-      classname: attr(m[1]!, 'classname') ?? attr(m[1]!, 'file') ?? '',
+      classname: attr(m[1]!, 'classname') ?? file ?? '',
       name: attr(m[1]!, 'name') ?? '',
       suite: suites.filter(([i]) => i < at).at(-1)?.[1] ?? '',
       outcome: failure ? 'failed' : /<skipped\b/.test(body) ? 'skipped' : 'passed',
-      ...(message !== undefined ? { message: message.trim().split('\n')[0]!.slice(0, 300) } : {}),
+      ...(file ? { file } : {}),
+      ...(message !== undefined && lines.length ? { message: lines.join('\n') } : {}),
+      ...(expected ? { expected: expected.slice(0, 200) } : {}),
+      ...(actual ? { actual: actual.slice(0, 200) } : {}),
     });
   }
   return cases;
@@ -198,37 +225,83 @@ export async function gradeCheckout(input: GradeInput): Promise<GradeResult> {
     mkdirSync(dirname(join(dir, path)), { recursive: true });
     copyFileSync(src, join(dir, path));
   }
-  const isHidden = (c: TestCase) => hiddenPaths.has(c.classname) || task.grade.hidden.test(c.classname) || task.grade.hidden.test(c.suite);
-  const attempt = async (n: number) => {
+  // A pytest class name is its module's dotted path: tests.test_fees is tests/test_fees.py.
+  const pyFile = (c: TestCase) => (/^[\w]+(\.[\w]+)+$/.test(c.classname) ? `${c.classname.replace(/\./g, '/')}.py` : undefined);
+  const byPath = (c: TestCase) => hiddenPaths.has(c.classname) || (!!c.file && hiddenPaths.has(c.file)) || (!!pyFile(c) && hiddenPaths.has(pyFile(c)!)) || task.grade.hidden.test(c.classname) || task.grade.hidden.test(c.suite) || (!!c.file && task.grade.hidden.test(c.file));
+  // Where the runner gives no file for a test (Node 20 and 22, and TAP for a passing test), a test
+  // is hidden when its name is written in a hidden test file.
+  const hiddenText = hidden.map(([src]) => readFileSync(src, 'utf8')).join('\n');
+  const byName = (c: TestCase) => {
+    const n = c.name.split(' > ').at(-1)!;
+    return n.length > 2 && [`'${n}'`, `"${n}"`, `\`${n}\``, `def ${n}(`].some((q) => hiddenText.includes(q));
+  };
+  // A test file that failed to load is reported as one test named after the file.
+  const fileTest = (c: TestCase) => relativeFile(c.name, dirs).file;
+  const located = (c: TestCase) => !!c.file || !!pyFile(c) || hiddenPaths.has(c.classname) || hiddenPaths.has(fileTest(c) ?? '');
+  const isHidden = (c: TestCase) => byPath(c) || hiddenPaths.has(fileTest(c) ?? '') || (!located(c) && byName(c));
+  // Ask Node's test runner and pytest for reports, unless the project picks its own reporters:
+  // two sets of reporter flags would stop Node's test runner before any test ran.
+  const asksForReports = !ownReporters(dir, input.command);
+  // The checkout as the tests may name it: on macOS /var is /private/var.
+  const dirs = [...new Set([dir, realpathSync(dir)])];
+  const attempt = async (n: number, withReports: boolean) => {
     rmSync(join(dir, REPORTS), { recursive: true, force: true });
     for (const f of task.grade.reports) rmSync(join(dir, f), { recursive: true, force: true });
     mkdirSync(join(dir, REPORTS), { recursive: true });
     const logFile = `${dir}.grade${n > 1 ? `-${n}` : ''}.log`;
-    const code = await input.runner({ dir, image: input.image, command: input.command, env: {}, reportsDir: REPORTS, timeoutMs: task.grade.timeoutMinutes * 60_000, logFile, cacheDir: input.cacheDir });
+    const command = withReports ? `${REPORT_PREFIX}\n${input.command}` : input.command;
+    const code = await input.runner({ dir, image: input.image, command, env: {}, reportsDir: REPORTS, timeoutMs: task.grade.timeoutMinutes * 60_000, logFile, cacheDir: input.cacheDir });
     const byId = new Map<string, TestCase>();
-    for (const c of junitFiles(dir, task.grade.reports).flatMap((f) => parseJUnit(readFileSync(f, 'utf8')))) {
-      const id = `${c.suite}|${c.classname}#${c.name}`;
+    for (const raw of junitFiles(dir, [...task.grade.reports, ...KNOWN_REPORTS]).flatMap((f) => parseJUnit(readFileSync(f, 'utf8')))) {
+      const c = raw.file ? { ...raw, ...relativeFile(raw.file, dirs) } : raw;
+      const id = `${c.suite}|${c.classname}|${c.file ?? ''}#${c.name}`;
       if (!byId.has(id) || c.outcome === 'failed') byId.set(id, c);
     }
-    return { code, cases: [...byId.values()], logFile };
+    const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
+    // No report: what the runner printed.
+    const reading = byId.size ? undefined : readOutput(log, dirs);
+    const cases = byId.size ? [...byId.values()] : (reading?.cases ?? []);
+    return { code, cases, reading, source: (byId.size ? 'junit' : reading ? 'output' : 'none') as GradeResult['source'], logFile, log };
   };
-  let run = await attempt(1);
+  let run = await attempt(1, asksForReports);
   let attempts = 1;
+  // The flags meant for reports must never be why a grade fails: with them, a run that failed
+  // and left nothing to read runs again as the project wrote it.
+  if (asksForReports && run.code !== 0 && run.code !== 'timeout' && run.source === 'none') {
+    run = await attempt(2, false);
+    attempts = 2;
+  }
   let flaky: string[] = [];
-  const label = (c: TestCase) => `${c.classname} > ${c.name}`;
+  const label = (c: TestCase) => `${c.file ?? c.classname} > ${c.name}`;
   // A failure only in the project's own tests may be a flaky test it already has: retry once.
   // A hidden test failing is never retried.
   const firstFailed = run.cases.filter((c) => c.outcome === 'failed');
   if (run.code !== 0 && run.code !== 'timeout' && firstFailed.length && !firstFailed.some(isHidden)) {
-    run = await attempt(2);
-    attempts = 2;
+    run = await attempt(attempts + 1, asksForReports);
+    attempts++;
     if (run.code === 0) flaky = firstFailed.map(label);
   }
-  const log = existsSync(run.logFile) ? readFileSync(run.logFile, 'utf8') : '';
+  const log = run.log;
+  const loadError = buildError(log);
+  for (const c of run.cases)
+    if (c.outcome === 'failed' && /\.\w+$/.test(c.name) && (!c.message || /^test failed$/i.test(c.message.trim())) && loadError) {
+      c.message = `the file did not load: ${loadError}`;
+      const f = fileTest(c);
+      if (!c.file && f) c.file = f;
+    }
+  const didNotLoad = (c: TestCase) => c.message?.startsWith('the file did not load: ') === true;
   const hiddenCases = run.cases.filter(isHidden);
   const ran = hiddenCases.filter((c) => c.outcome !== 'skipped');
   const failedCases = run.cases.filter((c) => c.outcome === 'failed');
-  const withReports = task.grade.reports.length > 0 || run.cases.length > 0;
+  const hiddenFailed = hiddenCases.filter((c) => c.outcome === 'failed');
+  const counts = countTests(run, isHidden, hiddenPaths, task.grade.hidden);
+  // Whether a run with no hidden test can be told: every test is known, each by its file (or the
+  // suite names its reports, as before). A match by name alone never fails a grade.
+  const complete = (run.source === 'junit' || run.reading?.runner === 'tap') && run.cases.every(located);
+  const failed: FailedTest[] = failedCases
+    .map((c) => ({ name: c.name, ...(c.file ? { file: c.file } : c.classname ? { file: c.classname } : {}), ...(c.line ? { line: c.line } : {}), hidden: isHidden(c), ...(c.message ? { message: c.message } : {}), ...(c.expected !== undefined ? { expected: c.expected } : {}), ...(c.actual !== undefined ? { actual: c.actual } : {}) }))
+    .sort((a, b) => Number(b.hidden) - Number(a.hidden))
+    .slice(0, 20);
   const result = (verdict: GradeResult['verdict'], reason: string, failures: string[]): GradeResult => ({
     verdict,
     reason,
@@ -236,19 +309,89 @@ export async function gradeCheckout(input: GradeInput): Promise<GradeResult> {
     timedOut: run.code === 'timeout',
     attempts,
     flaky,
-    ...(withReports ? { tests: { total: run.cases.length, failed: failedCases.length, hidden: ran.length, hiddenFailed: hiddenCases.filter((c) => c.outcome === 'failed').length } } : {}),
+    ...(counts ? { tests: counts } : {}),
     failures,
+    failed,
+    source: run.source,
+    outputTail: logTail(log),
     overwritten,
     durationSeconds: Math.round((Date.now() - started) / 1000),
     log: run.logFile,
   });
-  if (run.code === 'timeout') return result('fail', `the grading command ran past ${task.grade.timeoutMinutes} minutes`, explain(log));
+  // The change edited files the hidden tests then replaced: its own tests in them did not run.
+  const putBack = overwritten.length
+    ? overwritten.length === 1
+      ? ` The change also edited ${overwritten[0]}, which the hidden tests replace, so its own tests in that file did not run.`
+      : ` The change also edited ${overwritten.length} files the hidden tests replace (${overwritten.slice(0, 3).join(', ')}), so its own tests in them did not run.`
+    : '';
+  const lines = failedCases.length ? failedCases.map((c) => `${label(c)}${c.message ? `: ${c.message.split('\n')[0]}` : ''}`) : explain(log);
+  if (run.code === 'timeout') return result('fail', `The tests ran past the ${task.grade.timeoutMinutes}-minute limit.${putBack}`, explain(log));
   if (run.code !== 0) {
-    const failures = failedCases.length ? failedCases.map((c) => `${label(c)}${c.message ? `: ${c.message}` : ''}`) : explain(log);
-    return result('fail', failedCases.length ? `${failedCases.length} test(s) failed, ${hiddenCases.filter((c) => c.outcome === 'failed').length} of them hidden` : `the grading command exited ${run.code}`, failures);
+    const broken = failedCases.length ? undefined : buildError(log);
+    if (broken) return result('fail', `The change does not build or load: ${broken}${putBack}`, explain(log));
+    if (hiddenFailed.length) {
+      const first = hiddenFailed[0]!;
+      if (didNotLoad(first)) {
+        const others = hiddenFailed.length - 1;
+        return result('fail', `The hidden test file ${first.file ?? first.name} did not load: ${first.message!.slice('the file did not load: '.length)}${others ? `; ${others} more hidden test${others === 1 ? '' : 's'} failed` : ''}.${putBack}`, lines);
+      }
+      const of = counts?.hidden ? ` of ${counts.hidden}` : '';
+      const more = hiddenFailed.length > 1 ? `, and ${hiddenFailed.length - 1} more` : '';
+      return result('fail', `${hiddenFailed.length}${of} hidden test${hiddenFailed.length === 1 && !of ? '' : 's'} failed: ${first.name}${describe(first)}${more}.${putBack}`, lines);
+    }
+    if (failedCases.length) {
+      const first = failedCases[0]!;
+      return result('fail', `The hidden tests passed, but ${failedCases.length === 1 ? 'one of the project’s own tests' : `${failedCases.length} of the project’s own tests`} failed: ${first.name}${describe(first)}${failedCases.length > 1 ? `, and ${failedCases.length - 1} more` : ''}.${putBack}`, lines);
+    }
+    if (counts && counts.failed > 0) return result('fail', `${counts.failed} test${counts.failed === 1 ? '' : 's'} failed; the output does not say which.${putBack}`, lines);
+    return result('fail', `The test command exited ${run.code} without a test failing that could be read. The last lines of its output say why.${putBack}`, lines);
   }
-  if (withReports && ran.length === 0) return result('fail', 'the command passed, but no hidden test case ran', []);
-  return result('pass', withReports ? `${ran.length} hidden test case(s) passed` : 'the grading command passed', []);
+  const withReports = task.grade.reports.length > 0 || complete;
+  if (withReports && ran.length === 0) return result('fail', `The tests passed, but no hidden test ran: the change may have removed or skipped them.${putBack}`, []);
+  const passedHidden = withReports ? ran.length : (counts?.hidden ?? 0);
+  return result('pass', passedHidden ? `All ${passedHidden} hidden test${passedHidden === 1 ? '' : 's'} passed.${putBack}` : `The test command passed.${putBack}`, []);
+}
+
+/** " (expected 2, got 3)", or the first line of the message, for a reason. */
+function describe(c: TestCase): string {
+  if (c.expected !== undefined && c.actual !== undefined) return ` (expected ${c.expected}, got ${c.actual})`;
+  const first = c.message?.split('\n').find((l) => l.trim());
+  return first ? ` (${first.slice(0, 160)})` : '';
+}
+
+/** Totals for the grade: every case when they are all known, else the runner's own totals. */
+function countTests(run: { cases: TestCase[]; reading: OutputReading | undefined; source: GradeResult['source'] }, isHidden: (c: TestCase) => boolean, hiddenPaths: Set<string>, hiddenRe: RegExp): GradeResult['tests'] {
+  const failedHidden = run.cases.filter((c) => c.outcome === 'failed' && isHidden(c)).length;
+  if (run.source === 'junit' || run.reading?.runner === 'tap') {
+    const ran = run.cases.filter((c) => c.outcome !== 'skipped');
+    const hidden = ran.filter(isHidden).length;
+    // None found, with some tests not located by file: unknown rather than none.
+    return { total: run.cases.length, failed: run.cases.filter((c) => c.outcome === 'failed').length, hidden: hidden || run.cases.every((c) => !!c.file || /\//.test(c.classname) || /^[\w]+(\.[\w]+)+$/.test(c.classname)) ? hidden : null, hiddenFailed: failedHidden };
+  }
+  const t = run.reading?.totals;
+  if (!t) return undefined;
+  // Vitest prints tests per file, so the hidden ones can be counted; Jest does not.
+  const perFile = run.reading?.perFile;
+  const hiddenFiles = perFile ? Object.entries(perFile).filter(([f]) => hiddenPaths.has(f) || hiddenRe.test(f)) : undefined;
+  const hidden = hiddenFiles?.length ? hiddenFiles.reduce((a, [, x]) => a + x.total, 0) : null;
+  return { total: t.total, failed: t.failed, hidden, hiddenFailed: failedHidden };
+}
+
+/** Report folders the common build tools write without being asked. */
+const KNOWN_REPORTS = ['target/surefire-reports', 'build/test-results'];
+
+/** Whether the command, or a package.json script it may run, picks Node's test reporters itself. */
+function ownReporters(dir: string, command: string): boolean {
+  if (/--test-reporter/.test(command)) return true;
+  const walk = (at: string, depth: number): boolean => {
+    if (depth > 3 || !existsSync(at)) return false;
+    for (const e of readdirSync(at, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      if (e.isDirectory() ? walk(join(at, e.name), depth + 1) : e.name === 'package.json' && /--test-reporter/.test(readFileSync(join(at, e.name), 'utf8'))) return true;
+    }
+    return false;
+  };
+  return walk(dir, 0);
 }
 
 /** A fresh checkout of `repo` at `ref`, for grading. */
