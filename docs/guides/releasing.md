@@ -46,6 +46,11 @@ The only outside dependencies are `yaml` and `pg`.
 Versions follow semantic versioning on `cradleworks/hosting`: a change that breaks it raises the
 first number (or, before 1.0, the second).
 
+**If a release is wrong,** don't move or delete its tag: something may already depend on its file
+and checksum. Fix the problem and release the next version. If the workflow failed before
+publishing, nothing was released: fix it, delete the tag (`git push origin :v<version>`), and tag
+again.
+
 ## Use a release
 
 ```sh

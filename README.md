@@ -131,7 +131,14 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 ```sh
 npx pnpm@12.18.0 install
 pnpm check      # core rule, typecheck, all tests
+pnpm build:package && pnpm check:package    # the installable package, and a check of it installed
 ```
+
+CI runs `pnpm check` on every push to `main` and on pull requests. Pushing a tag `v<version>` (the
+version in `package.json`) runs the Release workflow. It runs the checks, builds
+`cradleworks-<version>.tgz`, installs it in an empty project to test it, and attaches it to the
+GitHub release. Other projects depend on that file at an exact version; see
+[Releasing the factory](docs/guides/releasing.md).
 
 The repository is a pnpm workspace of small packages:
 
