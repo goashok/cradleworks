@@ -29,6 +29,20 @@ Cradleworks doesn't replace your coding agent. It runs the agents you already us
 the Codex CLI) and adds what a single chat session can't give a team: the same setup on every
 run, isolation, hard limits on spend and access, independent checks, and a complete record.
 
+## Hosted for your team: Cradleworks Cloud
+
+[**cradleworks.dev**](https://www.cradleworks.dev) is the hosted version of Cradleworks. It runs
+the same released factory as this repository, so nothing needs to run on anyone's laptop.
+Your team signs in with GitHub, labels issues, and approves specs and changes in a shared web
+console that shows every agent at work, what it costs, and what waits on a person.
+
+Each partner gets a **completely isolated environment** of its own: its own service, its own
+database, its own sandboxes for the agents, its own GitHub App with access only to the
+repositories you choose, and its own keys. Nothing is shared with another customer: no
+infrastructure, no data and no credentials.
+
+Prefer to run it yourself? Everything below is the open-source factory, and works on its own.
+
 ## Why Cradleworks
 
 Coding agents can now finish real tasks, but most teams still use them one chat at a time. The
