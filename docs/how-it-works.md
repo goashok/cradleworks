@@ -14,23 +14,20 @@ The full design is a pipeline of eight **stations**. People set direction and ap
 
 | # | Station | Who | In → out | Today |
 | --- | --- | --- | --- | --- |
-| 1 | Intake | adapter | issue or CLI request → work item | ✅ CLI (`factory submit`) · ✅ GitHub Issues (`factory watch`, M3) |
-| 2 | Specify | spec agent + requester | work item → spec with acceptance criteria | ✅ **M3**: one round of questions at most. A task file is its own spec. |
-| 3 | Approve spec | **human gate** | spec → approved spec | ✅ **M3**: `/approve` on the issue. Recorded as skipped for hand-written tasks. |
-| 4 | Plan | planner agent | spec → tasks with dependencies | ✅ **M3**: up to 8 tasks, checked, then run in parallel in dependency order |
-| 5 | **Build** | implementer agent | task → branch + pull request | ✅ **M1** |
-| 6 | **Verify** | checks + CI + reviewer agent + tester agent | PR → evidence, or back to Build | ✅ **M2** · tester (M3) |
-| 7 | **Approve change** | **human gate** | PR + evidence → approved PR | ✅ **M2** |
-| 8 | Merge and learn | adapter + learning loop | approved PR → merged; failures → rules | ✅ merge (M2) · 🚧 learning (M5) |
+| 1 | Intake | adapter | issue or CLI request → work item | ✅ CLI (`factory submit`) · ✅ GitHub or GitLab issues (`factory watch`) |
+| 2 | Specify | spec agent + requester | work item → spec with acceptance criteria | ✅ One round of questions at most. A task file is its own spec. |
+| 3 | Approve spec | **human gate** | spec → approved spec | ✅ `/approve` on the issue. Recorded as skipped for hand-written tasks. |
+| 4 | Plan | planner agent | spec → tasks with dependencies | ✅ Up to 8 tasks, checked, then run in parallel in dependency order |
+| 5 | **Build** | implementer agent | task → branch + pull request | ✅ |
+| 6 | **Verify** | checks + CI + reviewer agent + tester agent | PR → evidence, or back to Build | ✅ |
+| 7 | **Approve change** | **human gate** | PR + evidence → approved PR | ✅ |
+| 8 | Merge and learn | adapter + learning loop | approved PR → merged; failures → rules | ✅ Merge. Learning: you turn failures into project rules; the factory doesn't write rules itself yet. |
 
-The first version (milestone M1, the "walking skeleton") builds the spine all eight stations hang
-on: the state machine, the event log, the adapters, the sandbox and the CLI. It also builds one
-complete station, **Build**, which is the one that writes the code. M2 added **Verify**, the
-rework loop and the **change gate**, so a task now goes from the task file to a merged commit
-([guide](guides/verify-and-approve.md)). M3 added the front of the line. An issue becomes a
-spec, a plan and several tasks that run in parallel and merge in order
-([guide](guides/issues.md)). Each milestone adds stations without changing what's already
-there. See the [roadmap](roadmap.md).
+All eight stations hang on one spine: the state machine, the event log, the adapters, the sandbox
+and the CLI. A hand-written task starts at **Build**, goes through **Verify** and the rework loop,
+and stops at the **change gate** ([guide](guides/verify-and-approve.md)). An issue starts at the
+front of the line: it becomes a spec, a plan and several tasks that run in parallel and merge in
+order ([guide](guides/issues.md)). See the [roadmap](roadmap.md) for what's next.
 
 ## The things you'll see in the output
 
@@ -110,7 +107,7 @@ The core (`packages/core`) talks to the outside world only through interfaces
 | `SourceControl` | clone, branch, commit, push, open/read/merge PRs | `github`, `gitlab`, `local-git` | Bitbucket |
 | `Sandbox` | create an isolated workspace, run commands, network policy, destroy | `local-docker` (`process` for tests only) | Docker Sandboxes (microVMs), AWS Fargate, Kubernetes |
 | `AgentRuntime` | start an agent, stream normalised events, stop, report usage | `cli-agent` (Claude Code, Codex CLI; chosen per role) | Agent SDK |
-| `StateStore` | append events, query, snapshot | SQLite | Postgres |
+| `StateStore` | append events, query, snapshot | SQLite, PostgreSQL | |
 | `CI` | find runs for a commit, status, logs, artifacts | GitHub Actions, GitLab CI | |
 | `Tracker` | list and watch issues, comment, set status, check who may approve | `github-issues`, `gitlab-issues` | Jira, Linear |
 | `Notifier` | tell a person a gate is waiting | interface only | GitHub comments, Slack |

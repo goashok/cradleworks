@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a tag v<version> (the version in package.json) builds the package, checks it installed in
-# an empty project, and attaches it to a GitHub release of that tag. See docs/guides/releasing.md.
+# an empty project, and attaches it to a GitHub release of that tag. See docs/maintainers/releasing.md.
 
 on:
   push:

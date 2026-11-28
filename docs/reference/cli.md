@@ -42,10 +42,12 @@ Run every command except `status`, `log` and `cancel` inside a repository that h
 from anywhere. They read the state in
 `$CRADLEWORKS_HOME` (default `~/.cradleworks`), or in the database `CRADLEWORKS_DATABASE_URL` names.
 
-Until Cradleworks is published as a package, run the CLI from a checkout:
+Run the CLI from a checkout, or from an installed release
+([quick start](../quickstart.md#1-install-cradleworks)):
 
 ```sh
-alias factory="node /path/to/cradleworks/packages/cli/src/main.ts"
+alias factory="node /path/to/cradleworks/packages/cli/src/main.ts"        # a checkout
+alias factory="/path/to/install/node_modules/.bin/factory"                 # a release
 ```
 
 ## Exit codes
@@ -91,7 +93,7 @@ gate. It runs in the foreground.
 | Option | Meaning |
 | --- | --- |
 | `--base <branch>` | The branch to start from and open the PR against. Default `main`. |
-| `--build-only` | Stop after the PR opens, without Verify (the M1 behaviour). |
+| `--build-only` | Stop after the PR opens, without Verify. |
 
 The task file must start with a `# Title` line. The rest is the description. See
 [Write good tasks](../guides/writing-tasks.md).

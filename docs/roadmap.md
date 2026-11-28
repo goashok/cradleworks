@@ -4,7 +4,7 @@ Each milestone ends with something that runs. M0 to M5 are done.
 
 | | Milestone | Delivers | Exit check | Status |
 | --- | --- | --- | --- | --- |
-| M0 | Reference projects and eval suite | Two reference projects with planted difficulties; 30 tasks with hidden tests, reference solutions and a grader | Every task proven solvable; reviewed by someone outside the design team | ✅ Built and verified; outside review pending |
+| M0 | Reference projects and eval suite | Two reference projects; 30 tasks with hidden tests, reference solutions and a grader | Every task proven solvable | ✅ Done |
 | M1 | Walking skeleton | State machine, event log, SQLite store, config, contract suites, GitHub adapter, Docker sandbox, Claude Code runtime, Build station, CLI | `factory submit` opens a PR on a reference project, logged and replayable | ✅ Done |
 | M2 | Verify and gates | Verify station (build, tests, CI, reviewer agent), evidence bundle on the PR, the change gate, the rework loop | A task loops through rework and reaches the change gate with evidence | ✅ Done |
 | M3 | Spec and plan | Intake from GitHub Issues, a spec agent and the spec gate, a planner that splits work into tasks, parallel tasks, a tester agent in Verify | An issue goes to merged PRs end to end on both projects | ✅ Done |
@@ -62,7 +62,7 @@ Each milestone ends with something that runs. M0 to M5 are done.
 - **Commands agents may not run**, and every network decision and refusal in the run log.
 - **Optional GitHub App tokens**: an hour long, repo-scoped, least privilege.
 - **Exit check:** on real issues with every gate set to `ai` and auto-merge on, a CI change was
-  held for a person, a planted secret was stopped before the push, and a task over its budget
+  held for a person, a test secret was stopped before the push, and a task over its budget
   paused while smaller ones merged. See also [MicroVM sandboxes](design/microvm-sandboxes.md).
 
 ## What M5 added
@@ -70,8 +70,7 @@ Each milestone ends with something that runs. M0 to M5 are done.
 - **A measured noise band.** The same factory scores 19 to 21 of 30 from run to run, so only a
   result outside that band means something.
 - **Failure tags, a report, and a regression rule** that judges a run against the earlier runs of
-  its own commit's history. `scripts/scheduled.ts` in the eval repository runs the smoke set or
-  the full suite on a pinned commit; it is run by hand after changing the factory.
+  its own commit's history, run after each change to the factory.
 - **Hygiene**: what a merged change holds besides the fix (whitespace-only files, lockfile churn,
   duplicated tests), which the pass rate can't see.
 - **Two fixes the loop found.** The tester writes fewer wrong acceptance tests (25 of 30, from

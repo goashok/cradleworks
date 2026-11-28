@@ -237,4 +237,4 @@ The reviewer is a second agent run per attempt, with the same `budgets.per_task_
 15-minute limit. On the example project it added about 5 seconds and $0.01. Checks add the time
 of your build and tests, and CI adds however long your workflows take.
 
-`factory submit --build-only` skips Verify and stops after the PR, like milestone M1.
+`factory submit --build-only` skips Verify and stops after the PR opens.

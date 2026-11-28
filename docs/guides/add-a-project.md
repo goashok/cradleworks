@@ -85,9 +85,8 @@ The agent sees every `stack` command by name, and it's told to run the build and
 finishes. Name your commands so their purpose is obvious (`contract_test`, `frontend_typecheck`):
 those names are all the agent knows about them.
 
-Every key is described in the [configuration reference](../reference/configuration.md). Several
-keys, such as `gates`, are accepted and checked now but only take effect in later milestones. The
-reference marks which.
+Every key is described in the [configuration reference](../reference/configuration.md). A few
+keys are accepted and checked but don't take effect yet; the reference marks them.
 
 ## 2. Build a sandbox image
 

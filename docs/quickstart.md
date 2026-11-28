@@ -27,6 +27,16 @@ alias factory="node $PWD/packages/cli/src/main.ts"   # add to your shell profile
 factory help
 ```
 
+This guide uses the example project in the repository, so it needs the clone. Once you move on to
+your own repositories, you can **install a release** instead: each
+[release](https://github.com/goashok/cradleworks/releases) is an npm package file.
+
+```sh
+mkdir -p ~/cradleworks-release && cd ~/cradleworks-release && npm init -y >/dev/null
+npm install https://github.com/goashok/cradleworks/releases/download/v<version>/cradleworks-<version>.tgz
+alias factory="$HOME/cradleworks-release/node_modules/.bin/factory"
+```
+
 ## 2. Give the agent a credential
 
 The agent needs one of these. It reaches the agent only as an environment variable inside the

@@ -2,7 +2,7 @@
 // type declarations in the same folders as the sources (so defaults/ and docs/ are found next to
 // the code, as in a checkout), the `factory` command, and the entry points `cradleworks/hosting` and
 // `cradleworks/testing`. The release workflow attaches it to a GitHub release; see
-// docs/guides/releasing.md.
+// docs/maintainers/releasing.md.
 //
 //   node scripts/build-package.ts            # then: node scripts/check-package.ts
 

@@ -151,8 +151,7 @@ build, verify and merge.
 - A **reviewer drill** checks the reviewer directly, with known-wrong changes it must send back
   and correct ones it must pass.
 
-The [evaluation guide](docs/guides/evaluating.md) covers the method, every baseline, and the
-failures that remain.
+[How Cradleworks is measured](docs/guides/evaluating.md) covers the method and the results.
 
 ## Get started
 
@@ -167,8 +166,8 @@ alias factory="node $PWD/packages/cli/src/main.ts"
 factory help
 ```
 
-Each release is also published as an installable package. See
-[Releasing the factory](docs/guides/releasing.md#use-a-release).
+Each release is also published as an installable package, for use on your own repositories. See
+[Install a release](docs/quickstart.md#1-install-cradleworks).
 
 ## Status
 
@@ -200,9 +199,8 @@ with sign-in for teams.
 - [Sandbox and credentials](docs/guides/security.md): what the agent can and cannot reach
 - [GitHub App tokens](docs/guides/github-app.md): short-lived, repo-scoped tokens instead of yours
 - [Measure your own factory](docs/guides/measuring.md): an eval suite on your code, config variants, the noise band, `factory stats`
-- [How Cradleworks is measured](docs/guides/evaluating.md): its own eval suite and baselines
+- [How Cradleworks is measured](docs/guides/evaluating.md): its own eval suite, the method and the results
 - [Write an adapter](docs/guides/writing-an-adapter.md): plug in another source control, sandbox or agent
-- [Releasing the factory](docs/guides/releasing.md): the package on each GitHub release, and depending on it
 
 **Reference**
 - [Configuration](docs/reference/configuration.md): every `factory.yaml` key, and which ones take effect today
@@ -220,7 +218,7 @@ pnpm build:package && pnpm check:package    # the installable package, and a che
 CI runs `pnpm check` on every push to `main`. Pushing a tag `v<version>` (the version in
 `package.json`) runs the Release workflow. It runs the checks, builds
 `cradleworks-<version>.tgz`, installs it in an empty project to test it, and attaches it to the
-GitHub release.
+GitHub release. Release steps are in [For maintainers](docs/maintainers/README.md).
 
 The repository is a pnpm workspace of small packages:
 

@@ -59,11 +59,16 @@ export function parseTopic(path: string, text: string): Topic {
   return { name: path.split('/').pop()!.replace(/\.md$/, ''), path, title: title.replace(/`/g, ''), summary, sections, text };
 }
 
+/** Folders of docs/ that are for the project's maintainers, not for people using the factory. */
+const MAINTAINER_DIRS = new Set(['maintainers']);
+
 export function loadTopics(dir = docsDir()): Topic[] {
   const out: Topic[] = [];
   const walk = (at: string) => {
     for (const e of readdirSync(at, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      if (e.isDirectory()) walk(join(at, e.name));
+      if (e.isDirectory()) {
+        if (!(at === dir && MAINTAINER_DIRS.has(e.name))) walk(join(at, e.name));
+      }
       else if (e.name.endsWith('.md')) out.push(parseTopic(relative(dir, join(at, e.name)), readFileSync(join(at, e.name), 'utf8')));
     }
   };

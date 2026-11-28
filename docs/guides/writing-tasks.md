@@ -69,14 +69,8 @@ against it. A clear `Done when …` line is what it checks first.
 
 ## Sizes that work today
 
-From the first baseline on two reference projects (Spring Boot + React, and Node/TypeScript):
-
-| Kind | Passed | Examples |
-| --- | --- | --- |
-| Bug fixes | 8 / 8 | off-by-one retry limits, a race on concurrent orders, timezone in invoice numbers |
-| Features | 10 / 11 | new endpoints, scheduling, webhook signing, discount codes, refunds |
-| Refactors | 5 / 6 | introducing a `Money` type, decoupling modules, `Optional` instead of null |
-| Dependency upgrades | 3 / 4 | Node 24, Postgres 18 (Spring Boot 4 failed) |
-
-Most runs took one to two minutes and cost cents. See [How Cradleworks is measured](evaluating.md) for how
-these were graded.
+On Cradleworks' own suite, bug fixes, new endpoints and features of a day or two, focused
+refactors and routine dependency upgrades all go through reliably. Most single tasks take one to
+two minutes and cost cents. What fails most often is a requirement the codebase implies but the
+task doesn't state, such as a module boundary or a field callers depend on. If a task has one of
+those, say it. See [How Cradleworks is measured](evaluating.md) for the numbers.

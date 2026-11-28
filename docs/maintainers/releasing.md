@@ -1,5 +1,7 @@
 # Releasing the factory
 
+*For maintainers. To install a release, see the [quick start](../quickstart.md#1-install-cradleworks).*
+
 A release is one file: `cradleworks-<version>.tgz`, attached to the GitHub release `v<version>`.
 It's an ordinary npm package. Projects that run the factory as a service depend on it by URL at an
 exact version, rather than on a checkout of this repository.
@@ -51,11 +53,12 @@ and checksum. Fix the problem and release the next version. If the workflow fail
 publishing, nothing was released: fix it, delete the tag (`git push origin :v<version>`), and tag
 again.
 
-## Use a release
+## Depend on a release
+
+A service that runs the factory depends on the file at an exact version:
 
 ```sh
 npm install https://github.com/goashok/cradleworks/releases/download/v<version>/cradleworks-<version>.tgz
 ```
 
-That puts the URL in `package.json`, and the lockfile pins the file's checksum. To run the CLI from
-it, use `npx factory …`, or `node_modules/cradleworks/packages/cli/src/main.js`.
+That puts the URL in `package.json`, and the lockfile pins the file's checksum.

@@ -20,6 +20,12 @@ describe('factory docs', () => {
     expect(findSection(t, 'one')!.text).toContain('more');
   });
 
+  it('leaves out the maintainers\' pages', () => {
+    const paths = loadTopics().map((t) => t.path);
+    expect(paths).toContain('guides/evaluating.md');
+    expect(paths.some((p) => p.startsWith('maintainers/'))).toBe(false);
+  });
+
   it('finds the shipped guides and the section that answers a question', () => {
     const topics = loadTopics();
     expect(findTopic(topics, 'verify-and-approve')?.title).toBe('Verify, rework and approve');
